@@ -29,14 +29,16 @@ The bundle builder must obtain the release directory from
 
 ## Local state and prerequisites
 
-The app uses `~/Library/Application Support/RWS/config.json`. Its import picker
-first validates the selected file through the bundled CLI, then copies it only when that destination does
-not exist. It never replaces an existing configuration or copies mount
-receipts.
+New settings live at `~/Library/Application Support/RWS/config.json`. Startup
+reuses an existing default/remembered configuration or a scoped adjacent
+`.rws-local` configuration. Selection validates through the CLI and uses the
+original file without copying mount receipts. Startup does not rewrite settings
+or switch mount backends. Automatically discovered SSHFS is passed as a
+process-scoped executable override; explicit Save is needed to persist changes.
+See [discovery details](../docs/macos-app.md#configuration-discovery-at-startup).
 
-Mounting currently needs macFUSE plus the external patched RWS SSHFS build.
-Choose its absolute path under **Mac Setup**. These prerequisites are not
-installed or modified by the app.
+macFUSE and the external patched RWS SSHFS must already be installed. Startup
+checks them and shows actionable errors; it does not install system software.
 
 The optional Delta action adds rules that tell Delta agents to forward explicit
 commands through RWS. Delta, Finder, editors, Git integrations, and other native

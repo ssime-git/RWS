@@ -13,6 +13,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var operationStateUncertain = false
     @Published private(set) var safeToTerminate = false
 
+    @Published var startupMessage = "Vérification de la configuration…"
+    @Published var prerequisiteProblem: String?
+    @Published var configurationCandidates: [URL] = []
+    @Published var configurationReady = false
+    @Published var checkingStartup = false
+    @Published private(set) var prerequisitesReady = false
+    @Published private(set) var detectedSSHFS: String?
+    private var started = false
+    private let preferences = UserDefaults.standard
+
     let updateGuard = UpdateGuard()
     lazy var updates = UpdateManager(model: self)
     private let runner = ProcessRunner()
@@ -23,7 +33,7 @@ final class AppModel: ObservableObject {
             .appendingPathComponent("config.json")
     }
 
-    var configurationURL = AppModel.defaultConfigurationURL
+    @Published private(set) var configurationURL = AppModel.defaultConfigurationURL
     var cliURL: URL {
         Bundle.main.resourceURL?.appendingPathComponent("bin/rws") ?? URL(fileURLWithPath: "/missing/rws")
     }
@@ -38,17 +48,126 @@ final class AppModel: ObservableObject {
         } catch { alertMessage = error.localizedDescription }
     }
 
+    func startup() async {
+        guard !started else { return }
+        started = true
+        checkingStartup = true
+        safeToTerminate = false
+        await updateGuard.beginOperation()
+        let remembered = preferences.string(forKey: "configurationSource").map { URL(fileURLWithPath: $0) }
+        configurationCandidates = StartupDiscovery.configurations(
+            defaultURL: Self.defaultConfigurationURL, remembered: remembered,
+            appURL: Bundle.main.bundleURL, home: FileManager.default.homeDirectoryForCurrentUser)
+        if configurationCandidates.count == 1 {
+            await selectConfiguration(configurationCandidates[0])
+        } else if configurationCandidates.isEmpty {
+            configurationReady = true
+            startupMessage = "Ajoutez votre premier espace distant."
+            await checkPrerequisites()
+        } else {
+            startupMessage = "Plusieurs configurations trouvées : choisissez celle à utiliser."
+        }
+        await updateGuard.endOperation()
+        checkingStartup = false
+    }
+
     func importConfiguration(_ source: URL) async {
+        checkingStartup = true
+        safeToTerminate = false
+        await updateGuard.beginOperation()
+        await selectConfiguration(source)
+        await updateGuard.endOperation()
+        checkingStartup = false
+    }
+
+    private func selectConfiguration(_ source: URL) async {
         do {
-            guard !FileManager.default.fileExists(atPath: configurationURL.path) else {
-                throw ConfigurationError.destinationExists
+            if configurationReady, !configuration.workspaces.isEmpty,
+               source.resolvingSymlinksInPath() != configurationURL.resolvingSymlinksInPath() {
+                guard FileManager.default.fileExists(atPath: configurationURL.path) else {
+                    throw NSError(domain: "RWSConfiguration", code: 2, userInfo: [NSLocalizedDescriptionKey: "La configuration active a disparu ; vérifiez ses montages avant de changer de configuration."])
+                }
+                let current = try await runner.run(executable: cliURL, arguments: CLICommand.status(config: configurationURL, workspace: nil).arguments)
+                guard current.exitCode == 0, !current.outputWasTruncated,
+                      MountStatusClassifier.classify(current.stdout + current.stderr) == .inactive else {
+                    throw NSError(domain: "RWSConfiguration", code: 2, userInfo: [NSLocalizedDescriptionKey: "Déconnectez les espaces de la configuration actuelle avant d’en choisir une autre."])
+                }
             }
-            guard await perform(.status(config: source, workspace: nil), refreshAfter: false) else { return }
-            try ConfigurationImporter.importConfig(from: source, to: configurationURL)
-            load()
-            output = "Imported \(source.lastPathComponent). Mount receipts and other files were not copied."
+            guard FileManager.default.fileExists(atPath: source.path) else {
+                throw CocoaError(.fileReadNoSuchFile)
+            }
+            // Rust is the schema authority. Decode its normalized JSON, not a
+            // second, independent interpretation of the selected source file.
+            let result = try await runner.run(executable: cliURL, arguments: CLICommand.list(config: source).arguments)
+            guard result.exitCode == 0, !result.outputWasTruncated else {
+                throw NSError(domain: "RWSConfiguration", code: 1, userInfo: [NSLocalizedDescriptionKey: result.stderr.isEmpty ? "La configuration n’a pas pu être validée." : result.stderr])
+            }
+            let decoded = try AppConfiguration.decode(Data(result.stdout.utf8))
+            configurationURL = source
+            configuration = decoded
+            selectedWorkspace = decoded.workspaces.first?.name
+            configurationReady = true
+            configurationCandidates = []
+            preferences.set(source.path, forKey: "configurationSource")
+            startupMessage = "Configuration retrouvée — \(decoded.workspaces.count) espace(s)."
+            await checkPrerequisites()
             await refreshStatus()
-        } catch { alertMessage = error.localizedDescription }
+            if let mounted = decoded.workspaces.first(where: { output.contains("\($0.name): connected (verified RWS mount)") }) {
+                selectedWorkspace = mounted.name
+            }
+        } catch {
+            startupMessage = "Configuration inutilisable : \(source.path)"
+            alertMessage = "Impossible d’utiliser \(source.path) :\n\(error.localizedDescription)"
+        }
+    }
+
+    func recheckStartup() async {
+        guard !checkingStartup, !isBusy else { return }
+        checkingStartup = true
+        safeToTerminate = false
+        await updateGuard.beginOperation()
+        if configurationReady {
+            await checkPrerequisites()
+            await refreshStatus()
+        } else if configurationCandidates.count == 1 {
+            await selectConfiguration(configurationCandidates[0])
+        }
+        await updateGuard.endOperation()
+        checkingStartup = false
+    }
+
+    private func checkPrerequisites() async {
+        prerequisitesReady = false
+        detectedSSHFS = nil
+        let fm = FileManager.default
+        let fusePresent = fm.fileExists(atPath: "/Library/Filesystems/macfuse.fs/Contents/Info.plist")
+            && fm.fileExists(atPath: "/usr/local/lib/libfuse3.4.dylib")
+        guard fusePresent else {
+            prerequisiteProblem = MountPrerequisites.problem(macFUSEPresent: false, sshfsVersion: nil, fskit: true)
+            return
+        }
+        let configured = configuration.mount.sshfs.map { URL(fileURLWithPath: $0) }
+        let candidates = configured.map { [$0] } ?? StartupDiscovery.sshfsCandidates(configURL: configurationURL)
+        var version: String?
+        var diagnostic = ""
+        for candidate in candidates {
+            do {
+                let result = try await ProcessRunner(timeout: .seconds(5)).run(executable: candidate, arguments: ["--version"])
+                let text = result.stdout + result.stderr
+                let needsFSKit = configured == nil ? true : configuration.mount.fskit
+                if result.exitCode == 0, !result.outputWasTruncated,
+                   MountPrerequisites.problem(macFUSEPresent: true, sshfsVersion: text, fskit: needsFSKit) == nil {
+                    version = text
+                    detectedSSHFS = candidate.path
+                    break
+                }
+                diagnostic = text
+                if configured != nil { version = result.exitCode == 0 && !result.outputWasTruncated ? text : nil }
+            } catch { diagnostic = error.localizedDescription }
+        }
+        prerequisiteProblem = MountPrerequisites.problem(macFUSEPresent: true, sshfsVersion: version, fskit: configuration.mount.fskit)
+        prerequisitesReady = prerequisiteProblem == nil
+        if !prerequisitesReady, !diagnostic.isEmpty { output = diagnostic }
     }
 
     func add(name: String, host: String, remotePath: String, mountPath: String) async {
@@ -59,10 +178,11 @@ final class AppModel: ObservableObject {
     func saveSettings(sshfs: String, fskit: Bool) async {
         await perform(.settings(config: configurationURL, sshfs: sshfs, fskit: fskit))
         load()
+        await recheckStartup()
     }
 
     func openSelected() async {
-        guard let selectedWorkspace,
+        guard configurationReady, prerequisitesReady, let selectedWorkspace,
               let workspace = configuration.workspaces.first(where: { $0.name == selectedWorkspace }) else { return }
         let succeeded = await perform(.connect(config: configurationURL, workspace: selectedWorkspace))
         if succeeded { NSWorkspace.shared.open(URL(fileURLWithPath: workspace.mountRoot, isDirectory: true)) }
@@ -76,7 +196,7 @@ final class AppModel: ObservableObject {
     func installDeltaRules() async { await perform(.deltaRules(config: configurationURL)) }
 
     func refreshStatus() async {
-        guard !isBusy else { return }
+        guard configurationReady, !isBusy else { return }
         let succeeded = await perform(.status(config: configurationURL, workspace: nil), refreshAfter: false)
         if succeeded {
             let state = MountStatusClassifier.classify(output)
@@ -89,7 +209,7 @@ final class AppModel: ObservableObject {
     }
 
     func refreshStatusForUpdate() async {
-        guard !isBusy else { return }
+        guard !isBusy, !checkingStartup else { return }
         let succeeded = await perform(.status(config: configurationURL, workspace: nil), refreshAfter: false, allowDuringUpdatePreparation: true)
         let state = succeeded ? MountStatusClassifier.classify(output) : .unknown
         await updateGuard.setMountState(state)
@@ -107,7 +227,7 @@ final class AppModel: ObservableObject {
         safeToTerminate = false
         await updateGuard.beginOperation()
         do {
-            let result = try await runner.run(executable: cliURL, arguments: command.arguments)
+            let result = try await runner.run(executable: cliURL, arguments: command.arguments, environmentOverrides: detectedSSHFS.map { ["RWS_SSHFS": $0] } ?? [:])
             output = [result.stdout, result.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
             if result.outputWasTruncated { output += "\n[Output truncated]" }
             guard result.exitCode == 0 else {

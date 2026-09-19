@@ -241,3 +241,24 @@ configured keys and successful signing/notarization; development bundles have
 updates disabled. Production bundles enable automatic update checks but disable
 silent installation on quit; explicit installation is guarded by mount status.
 See [setup and remaining acceptance](macos-app.md).
+
+## Automatic startup detection — 2026-09-20
+
+The screenshot reported a generic configuration-format rejection. The current
+source decoder and bundled CLI both successfully read the actual existing
+configuration; the exact original selection/build responsible for the rejection
+was not established. Selection now uses the CLI's normalized JSON and errors
+identify the selected file.
+
+Startup discovers known configurations without a disk-wide search, preserves
+their original location/receipts, and checks the macFUSE runtime plus SSHFS
+version. Tests cover discovery precedence/ambiguity, dependency errors and literal
+process-scoped SSHFS overrides. A read-only acceptance test against this Mac's
+existing configuration, installed dependencies and mount status passed; its
+configuration bytes remained identical. No system package was installed and
+no active mount was disconnected. Detection does not prove FSKit activation.
+
+The user supplied a screenshot establishing that the prior app window renders.
+Native UI automation still could not acquire the app window, so the revised
+startup UI requires a user relaunch check; helper/CLI checks are not claimed as
+a complete graphical mount test.

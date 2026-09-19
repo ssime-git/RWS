@@ -70,9 +70,9 @@ enum ConfigurationError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidShape: "The selected file is not an RWS configuration."
-        case .unsupportedVersion: "This RWS configuration version is not supported."
-        case .destinationExists: "A configuration already exists. Import will not replace it."
+        case .invalidShape: "Le fichier choisi ne correspond pas au format RWS attendu."
+        case .unsupportedVersion: "Cette version de configuration RWS n’est pas prise en charge."
+        case .destinationExists: "Une configuration existe déjà ; elle ne sera pas remplacée."
         }
     }
 }
@@ -111,6 +111,10 @@ struct CLICommand: Equatable {
 
     static func settings(config: URL, sshfs: String, fskit: Bool) -> Self {
         Self(arguments: prefix(config) + ["settings", "--sshfs", sshfs, "--backend", fskit ? "fskit" : "default"])
+    }
+
+    static func list(config: URL) -> Self {
+        Self(arguments: prefix(config) + ["workspace", "list"])
     }
 
     static func deltaRules(config: URL) -> Self {

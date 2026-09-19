@@ -21,11 +21,12 @@ struct ContentView: View {
         } detail: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    startupStatus
                     workspaceControls
                     Divider()
                     addWorkspace
                     Divider()
-                    DisclosureGroup("Configuration du Mac", isExpanded: $showSetup) { setup.padding(.top, 8) }
+                    DisclosureGroup("Configuration avancée", isExpanded: $showSetup) { setup.padding(.top, 8) }
                     DisclosureGroup("Détails", isExpanded: $showDetails) {
                         Text(model.output.isEmpty ? "L’état et les détails des commandes apparaissent ici." : model.output)
                             .font(.system(.body, design: .monospaced))
@@ -39,16 +40,16 @@ struct ContentView: View {
             .navigationTitle(model.selectedWorkspace ?? "RWS")
         }
         .frame(minWidth: 820, minHeight: 600)
-        .disabled(model.isBusy || model.updatesPreparing || model.operationStateUncertain)
-        .overlay { if model.isBusy { ProgressView().controlSize(.large) } }
+        .disabled(model.isBusy || model.checkingStartup || model.updatesPreparing || model.operationStateUncertain)
+        .overlay { if model.isBusy || model.checkingStartup { ProgressView().controlSize(.large) } }
         .task {
-            model.load()
-            showSetup = model.configuration.workspaces.isEmpty
-            sshfsPath = model.configuration.mount.sshfs ?? ""
+            await model.startup()
+            showSetup = false
+            sshfsPath = model.configuration.mount.sshfs ?? model.detectedSSHFS ?? ""
             useFSKit = model.configuration.mount.fskit
-            await model.refreshStatus()
         }
         .onChange(of: model.configuration.mount.sshfs) { sshfsPath = $0 ?? "" }
+        .onChange(of: model.detectedSSHFS) { if model.configuration.mount.sshfs == nil { sshfsPath = $0 ?? "" } }
         .onChange(of: model.configuration.mount.fskit) { useFSKit = $0 }
         .alert("RWS", isPresented: Binding(get: { model.alertMessage != nil }, set: { if !$0 { model.alertMessage = nil } })) {
             Button("OK") { model.alertMessage = nil }
@@ -60,14 +61,35 @@ struct ContentView: View {
         }
     }
 
+    private var startupStatus: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(model.startupMessage).foregroundStyle(.secondary)
+            ForEach(model.configurationCandidates, id: \.path) { source in
+                Button(source.path) { Task { await model.importConfiguration(source) } }
+            }
+            if let problem = model.prerequisiteProblem {
+                Label(problem, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                HStack {
+                    Link("Installer macFUSE", destination: URL(string: "https://macfuse.github.io/")!)
+                    Button("Vérifier à nouveau") { Task { await model.recheckStartup() } }
+                    Button("Configuration avancée") { showSetup = true }
+                }
+            } else if model.prerequisitesReady {
+                Label("macFUSE et SSHFS détectés", systemImage: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var workspaceControls: some View {
         HStack {
             Button("Ouvrir dans le Finder") { Task { await model.openSelected() } }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.selectedWorkspace == nil)
+                .disabled(model.selectedWorkspace == nil || !model.prerequisitesReady || !model.configurationReady)
             Button("Déconnecter") { Task { await model.disconnectSelected() } }
                 .disabled(model.selectedWorkspace == nil)
-            Button("Actualiser") { Task { await model.refreshStatus() } }
+            Button("Actualiser") { Task { await model.recheckStartup() } }
             Spacer()
             if model.updates.isEnabled {
                 Button("Rechercher les mises à jour…") { Task { await model.updates.checkForUpdates() } }
@@ -87,7 +109,7 @@ struct ContentView: View {
                 Button("Ajouter") {
                     Task { await model.add(name: name, host: host, remotePath: remotePath, mountPath: "/Volumes/RWS-\(name)") }
                 }
-                .disabled(name.isEmpty || host.isEmpty || !remotePath.hasPrefix("/"))
+                .disabled(!model.configurationReady || name.isEmpty || host.isEmpty || !remotePath.hasPrefix("/"))
             }
             .padding(.top, 8)
         }
@@ -96,7 +118,7 @@ struct ContentView: View {
     private var setup: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                Text("RWS nécessite actuellement macFUSE et la version SSHFS corrigée externe. Sélectionnez son exécutable ; il n’est pas inclus dans l’app.")
+                Text("RWS nécessite actuellement macFUSE et la version SSHFS corrigée externe. La détection est automatique ; choisissez un autre exécutable uniquement si nécessaire.")
                     .foregroundStyle(.secondary)
                 HStack {
                     TextField("/absolute/path/to/sshfs", text: $sshfsPath)
@@ -105,10 +127,10 @@ struct ContentView: View {
                 Toggle("Utiliser le moteur macFUSE FSKit", isOn: $useFSKit)
                 HStack {
                     Button("Enregistrer") { Task { await model.saveSettings(sshfs: sshfsPath, fskit: useFSKit) } }
-                        .disabled(!sshfsPath.hasPrefix("/"))
-                    Button("Importer une configuration…") { importConfig() }
-                    Button("Installer les règles Delta…") { showDeltaConfirmation = true }
-                    Link("Aide à l’installation", destination: URL(string: "https://github.com/ssime-git/RWS/blob/main/docs/prototype.md")!)
+                        .disabled(!model.configurationReady || !sshfsPath.hasPrefix("/"))
+                    Button("Choisir une configuration…") { importConfig() }
+                    Button("Installer les règles Delta…") { showDeltaConfirmation = true }.disabled(!model.configurationReady)
+                    Link("Aide à l’installation", destination: URL(string: "https://github.com/ssime-git/RWS/blob/prototype/cli/docs/prototype.md")!)
                 }
             }
         }

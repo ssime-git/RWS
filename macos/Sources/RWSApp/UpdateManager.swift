@@ -26,7 +26,7 @@ final class UpdateManager: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     func checkForUpdates() async {
-        guard let model, await model.updateGuard.mayInstallUpdate() else {
+        guard let model, !model.checkingStartup, await model.updateGuard.mayInstallUpdate() else {
             model?.alertMessage = "Updates are available only after every RWS operation finishes and all registered volumes are disconnected. Refresh Status and try again."
             return
         }
@@ -41,7 +41,7 @@ final class UpdateManager: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck, error: AutoreleasingUnsafeMutablePointer<NSError?>) -> Bool {
-        guard model?.safeToTerminate == true else {
+        guard model?.safeToTerminate == true, model?.checkingStartup == false else {
             error.pointee = NSError(
                 domain: "RWSUpdateGuard", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "Disconnect every registered RWS volume before checking for updates."]

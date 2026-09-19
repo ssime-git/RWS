@@ -2,6 +2,16 @@ import XCTest
 @testable import RWSApp
 
 final class ProcessRunnerTests: XCTestCase {
+    func testProcessScopedOverridePreservesLiteralPath() async throws {
+        let path = "/a path/sshfs;literal"
+        let result = try await ProcessRunner().run(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "printf '%s' \"$RWS_SSHFS\""],
+            environmentOverrides: ["RWS_SSHFS": path])
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, path)
+    }
+
     func testRunnerDoesNotInvokeAShell() async throws {
         let result = try await ProcessRunner(outputLimit: 1024).run(
             executable: URL(fileURLWithPath: "/usr/bin/printf"),

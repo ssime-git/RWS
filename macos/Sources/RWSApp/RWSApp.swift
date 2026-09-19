@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model, !model.isBusy else {
+        guard let model, !model.isBusy, !model.checkingStartup else {
             model?.alertMessage = "RWS cannot quit or install an update while an operation is running."
             return .terminateCancel
         }

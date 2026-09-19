@@ -31,7 +31,7 @@ final class ProcessRunner: @unchecked Sendable {
         self.timeout = timeout
     }
 
-    func run(executable: URL, arguments: [String]) async throws -> ProcessResult {
+    func run(executable: URL, arguments: [String], environmentOverrides: [String: String] = [:]) async throws -> ProcessResult {
         guard FileManager.default.isExecutableFile(atPath: executable.path) else {
             throw ProcessRunnerError.executableMissing(executable.path)
         }
@@ -63,6 +63,7 @@ final class ProcessRunner: @unchecked Sendable {
             }
             process.executableURL = executable
             process.arguments = arguments
+            process.environment = ProcessInfo.processInfo.environment.merging(environmentOverrides) { _, selected in selected }
             process.standardInput = FileHandle.nullDevice
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe

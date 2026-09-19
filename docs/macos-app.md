@@ -1,15 +1,17 @@
 # RWS macOS app and automatic releases
 
 The native app is the graphical frontend for the existing Rust CLI. It stores
-personal workspace configuration in `~/Library/Application Support/RWS/`, outside
-the app bundle. Updating the app must not replace that directory.
+new workspace configuration in `~/Library/Application Support/RWS/`, outside
+the app bundle. Existing detected configurations are reused in place. Updating the app must not replace that directory.
 
 ## User workflow
 
 1. Install RWS in Applications and open it.
-2. During setup, select the installed patched SSHFS executable and add the SSH
-   host, remote directory and a workspace name. The Mac must already have working
-   SSH authentication and macFUSE/FSKit configured.
+2. On launch RWS detects its existing configuration and checks macFUSE and SSHFS.
+   A single detected configuration is reused automatically; multiple candidates
+   are presented for selection. Missing or incompatible dependencies display an
+   actionable error. On a new setup, add the SSH host, remote directory and a
+   workspace name. SSH authentication and FSKit activation remain prerequisites.
 3. Select the workspace and choose **Open**: RWS connects, verifies the mount and
    opens Finder. Choose **Disconnect** when finished; busy mounts are preserved.
 
@@ -113,3 +115,29 @@ A development build deliberately cannot fetch production updates; replace it
 with the first signed release once available. The generic Delta routing rule is
 still an agent convention, not interception of native Delta processes; see
 [the Delta guide](connection.md#delta-and-linux-commands).
+
+## Configuration discovery at startup
+
+Precedence: existing default Application Support config, remembered chosen source,
+then legacy `~/.config/rws/config.json` and `.rws-local/config.json` in at most seven
+app-bundle parent directories. This finds a repository development build without
+hardcoded personal paths or scanning the disk. An app copied to Applications
+cannot discover arbitrary old checkouts; use **Choisir une configuration** once
+if no known candidate exists. No configurations are merged or overwritten.
+
+The CLI validates the selected source and returns normalized JSON for the UI.
+Errors identify the selected path. Using the original file retains its mount
+receipts and avoids changing existing Delta rules. The chosen path is remembered
+for future launches. Keep that file and the configured SSHFS executable in place.
+
+Startup checks the installed macFUSE package/runtime and runs the selected SSHFS
+`--version` with a five-second bound. Without an explicit SSHFS path, detection
+checks adjacent experimental build directories and standard installation paths.
+A discovered SSHFS path is used only as an environment override for this app’s
+CLI calls; startup never rewrites the configuration or changes its backend.
+Use the explicit Save action to persist a changed path/backend.
+FSKit requires the RWS fskit3 fixes or later. Detection of installed files does
+not prove FSKit activation or remote connectivity; actual mount verification
+still runs on **Ouvrir dans le Finder**. Dependency failures disable Open, while
+Disconnect remains available. The installation link opens the official macFUSE
+site; RWS does not silently install packages or change system extensions.
