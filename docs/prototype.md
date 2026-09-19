@@ -39,6 +39,8 @@ RWS replaces itself with OpenSSH on Unix for command and terminal handling. `she
 
 ## Mount and edit
 
+**Current test limitation:** on the tested macOS 27.0 / macFUSE 5.4.0 / SSHFS 3.7.5 stack, reads and writes work but rename fails, Finder browsing is not validated, and `mount --fskit` stays open. Run `unmount` from a separate terminal when testing. Do not use this path for valuable project edits yet. See the [validation record](validation.md).
+
 ```sh
 ./target/debug/rws mount demo --fskit --dry-run
 ./target/debug/rws mount demo --fskit
@@ -70,4 +72,4 @@ Use a dedicated test directory on an authorized host. Mount it, create and edit 
 
 ## FSKit switches that do not activate
 
-A similar activation issue is tracked in [macFUSE issue #1194](https://github.com/macfuse/macfuse/issues/1194). Registration does not prove enablement. A community workaround edits the FSKit enabled-module preference and restarts its service, but it has not been validated here and is not performed automatically by RWS. Do not treat the legacy kernel-extension setup as a required step for FSKit.
+A similar activation issue is tracked in [macFUSE issue #1194](https://github.com/macfuse/macfuse/issues/1194). Registration does not prove enablement. A community workaround edits the FSKit enabled-module preference and restarts its service. A user-authorized, backed-up repair enabled a real mount on one test Mac; this is not a general setup guarantee and is not performed automatically by RWS. Follow the repository setup skill for diagnosis and temporary-permission cleanup. Do not treat the legacy kernel-extension setup as a required step for FSKit.

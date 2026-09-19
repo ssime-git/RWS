@@ -22,7 +22,7 @@ These checks validate remote execution, not editing through the filesystem mount
 
 ## Not yet verified
 
-- Actual SSHFS mount, Finder browsing/editing/saving, cache behavior, and unmount: macFUSE 5.4.0 and SSHFS 3.7.5 are now installed, but macOS reports the FSKit extension is not enabled.
+- Reliable Finder browsing/editing/saving and cache behavior. Basic mounting and I/O now work, but rename and the mount command lifecycle remain blocked as detailed below.
 - PTY resize and Ctrl+C under a long-running job, interrupted remote writes, and network-loss recovery.
 - Coding-agent launch: no agent was installed or authenticated as part of these checks.
 - Second host, transfer behavior, and performance targets from v0.1.
@@ -46,4 +46,24 @@ The installed SSHFS binary failed to start because `/usr/local/lib/libfuse3.4.dy
 
 After installing macFUSE, both modules were registered. A mount of a dedicated remote temporary directory failed with `File system extension not enabled`; the GUI switches remained off. SSHFS returned zero despite the failed mount. RWS now supports `mount --fskit` and checks the actual filesystem device boundary before reporting mount success. Regression tests cover both behaviors.
 
-System Settings shows both macFUSE FSKit modules disabled. Reading the FSKit enabled-module preference was denied by macOS even outside the execution sandbox. No preference edit, service restart, or boot-security change was attempted. See macFUSE issue #1194 for a similar, not yet confirmed, activation issue. No filesystem write test has been performed through a mount.
+Initially, System Settings showed both macFUSE FSKit modules disabled. Reading the FSKit enabled-module preference was denied by macOS even outside the execution sandbox. See [macFUSE issue #1194](https://github.com/macfuse/macfuse/issues/1194) for the related activation workaround.
+
+## FSKit activation and real I/O follow-up
+
+On macOS 27.0 build 26A428 with macFUSE 5.4.0 and SSHFS 3.7.5, the user ran a reviewed local helper after approving temporary terminal Full Disk Access. It preserved the five Apple entries, backed up the preference, added the two registered macFUSE module identifiers, and restarted `fskitd`. This single-machine recovery is not an automatically supported setup step. Boot security was not changed.
+
+Observed against an isolated remote temporary directory:
+
+- The OS reports an actual FSKit/macFUSE volume under `/Volumes`.
+- Creating a directory, writing a text file, `fsync`, and reading it back succeed. An independent remote command confirms the exact contents.
+- Renaming that file through the mount fails with `EINVAL` (22), repeatedly. The same rename succeeds through remote SSH.
+- The rename failure also occurs with direct SSHFS `-f` and `-d`, without RWS. The debug trace advertises server POSIX rename support but shows no outgoing rename request for the failed operation. This narrows investigation to the local filesystem stack; it does not establish which component is responsible.
+- Finder opens the volume, but its captured contents view is empty despite the files being accessible by path. Finder/editor acceptance has not passed.
+- `rws unmount` returns zero and the OS mount entry disappears. Remote test data remains available.
+- The ordinary `rws mount --fskit` command stays open while the volume is mounted, with SSHFS fork warnings. After unmount it reports no mounted filesystem. Its synchronous child-process lifecycle still needs correction; do not interpret this delayed error as proof that the preceding I/O did not occur.
+
+Raw screenshots and SSHFS traces are retained in ignored `.rws-local/diagnostics/`; they are not public README assets. The dedicated remote test directory is retained for diagnosis. The terminal's temporary Full Disk Access switch was turned off; the user then confirmed quitting it and a process check found no running Ghostty process, completing removal of this temporary grant.
+
+## Reproducible setup skill
+
+The repository includes `.agents/skills/rws-macos-setup/SKILL.md`, linked from root agent guidance and the README. Structure, references, and privacy-sensitive examples were checked; independent agent scenarios reviewed the procedure. A complete setup on a second, fresh Mac has not been executed.
