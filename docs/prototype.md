@@ -14,7 +14,7 @@ cargo build --locked
 ./target/debug/rws workspace add demo \
   --ssh user@devbox \
   --remote /home/user/projects/demo \
-  --mount "$HOME/RWS/demo"
+  --mount /Volumes/RWS-demo
 ./target/debug/rws workspace list
 ./target/debug/rws doctor --workspace demo
 ```
@@ -40,17 +40,17 @@ RWS replaces itself with OpenSSH on Unix for command and terminal handling. `she
 ## Mount and edit
 
 ```sh
-./target/debug/rws mount demo --dry-run
-./target/debug/rws mount demo
-open "$HOME/RWS/demo"
+./target/debug/rws mount demo --fskit --dry-run
+./target/debug/rws mount demo --fskit
+open /Volumes/RWS-demo
 # In a terminal with rws installed on PATH:
-cd "$HOME/RWS/demo"
+cd /Volumes/RWS-demo
 rws exec -- pwd
 # After leaving the mounted directory and closing files:
 rws unmount demo
 ```
 
-Install the CLI on PATH with `cargo install --path . --locked` if desired. A dry run prints the exact program and argument array without invoking SSH or creating a mount directory. Mounting refuses a nonempty directory or a symlink mount point. Mount lifecycle is delegated to SSHFS and the OS; this prototype has no daemon or automatic reconnect policy.
+Install the CLI on PATH with `cargo install --path . --locked` if desired. A dry run prints the exact program and argument array without invoking SSH or creating a mount directory. Mounting refuses a nonempty directory or a symlink mount point. `--fskit` selects the user-space backend and requires a direct child of `/Volumes`; macFUSE creates the mount directory. Enable its FSKit module in System Settings > General > Login Items & Extensions. Without this flag, SSHFS uses its default backend. RWS rejects an already-mounted path and verifies a filesystem device boundary after SSHFS returns; a zero exit code without a volume is an error. Mount lifecycle is delegated to SSHFS and the OS; this prototype has no daemon or automatic reconnect policy.
 
 `doctor` reports SSH/SFTP executable presence, verifies that `sshfs --version` succeeds, and optionally runs remote `pwd` with noninteractive SSH authentication. An SSHFS executable whose macFUSE library is missing is reported as unusable; mounting checks this before creating a mount directory. A missing mount dependency yields a nonzero result even if SSH works. It does not prove that macFUSE is loaded or a mount will succeed.
 
@@ -67,3 +67,7 @@ Install the CLI on PATH with `cargo install --path . --locked` if desired. A dry
 ## Manual acceptance check
 
 Use a dedicated test directory on an authorized host. Mount it, create and edit a small file through Finder or an editor, then independently inspect its contents through `rws exec`. Check nested-directory mapping, remote failure exit codes, interactive Ctrl+C, and terminal resizing. Unmount normally. Only then test controlled disconnections and a second host; do not use valuable project data for fault injection.
+
+## FSKit switches that do not activate
+
+A similar activation issue is tracked in [macFUSE issue #1194](https://github.com/macfuse/macfuse/issues/1194). Registration does not prove enablement. A community workaround edits the FSKit enabled-module preference and restarts its service, but it has not been validated here and is not performed automatically by RWS. Do not treat the legacy kernel-extension setup as a required step for FSKit.

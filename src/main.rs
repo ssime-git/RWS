@@ -44,6 +44,9 @@ enum Action {
         workspace: String,
         #[arg(long)]
         dry_run: bool,
+        /// Use the macFUSE FSKit backend; requires a direct child of /Volumes.
+        #[arg(long)]
+        fskit: bool,
     },
     Unmount {
         workspace: String,
@@ -124,6 +127,19 @@ fn check_sshfs() -> Result<(), String> {
         ));
     }
     Ok(())
+}
+fn mounted_filesystem(path: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let (Ok(mount), Some(Ok(parent))) = (
+            std::fs::metadata(path),
+            path.parent().map(std::fs::metadata),
+        ) {
+            return mount.dev() != parent.dev();
+        }
+    }
+    false
 }
 fn invoke(program: &str, args: &[String], dry_run: bool, replace: bool) -> Result<i32, String> {
     if dry_run {
@@ -212,37 +228,62 @@ fn run(cli: Cli) -> Result<i32, String> {
             }
             invoke("ssh", &ssh_args(&w.host, script, true), dry_run, true)
         }
-        Action::Mount { workspace, dry_run } => {
+        Action::Mount {
+            workspace,
+            dry_run,
+            fskit,
+        } => {
             let w = config.find(&workspace)?;
             if !cfg!(target_os = "macos") {
                 return Err("mount is currently supported on macOS only".into());
             }
+            if fskit && w.mount_root.parent() != Some(std::path::Path::new("/Volumes")) {
+                return Err("FSKit requires a mount point directly under /Volumes".into());
+            }
             if !dry_run {
                 check_sshfs()?;
+                if mounted_filesystem(&w.mount_root) {
+                    return Err("a filesystem is already mounted at this path".into());
+                }
                 if std::fs::symlink_metadata(&w.mount_root)
                     .is_ok_and(|m| m.file_type().is_symlink())
                 {
                     return Err("mount point must not be a symlink".into());
                 }
-                std::fs::create_dir_all(&w.mount_root)
-                    .map_err(|e| format!("mount directory: {e}"))?;
-                if std::fs::read_dir(&w.mount_root)
-                    .map_err(|e| e.to_string())?
-                    .next()
-                    .is_some()
+                // macFUSE creates and assigns ownership of FSKit mount points
+                // under /Volumes; creating them here would require sudo.
+                if !fskit {
+                    std::fs::create_dir_all(&w.mount_root)
+                        .map_err(|e| format!("mount directory: {e}"))?;
+                }
+                if w.mount_root.exists()
+                    && std::fs::read_dir(&w.mount_root)
+                        .map_err(|e| e.to_string())?
+                        .next()
+                        .is_some()
                 {
                     return Err(
                         "mount directory is not empty; refusing to hide existing files".into(),
                     );
                 }
             }
-            let args = vec![
+            let mut args = vec![
                 format!("{}:{}", w.host, w.remote_root),
                 w.mount_root.to_string_lossy().into_owned(),
                 "-o".into(),
                 "ConnectTimeout=10,ServerAliveInterval=15,ServerAliveCountMax=3".into(),
             ];
-            invoke("sshfs", &args, dry_run, false)
+            if fskit {
+                args.extend(["-o".into(), "backend=fskit".into()]);
+            }
+            let code = invoke("sshfs", &args, dry_run, false)?;
+            if !dry_run && code == 0 {
+                if !mounted_filesystem(&w.mount_root) {
+                    return Err("SSHFS exited but no mounted filesystem was found. Check its diagnostics and macFUSE extension settings".into());
+                }
+                println!("Mounted {} at {}", w.name, w.mount_root.display());
+            }
+            Ok(code)
         }
         Action::Unmount { workspace, dry_run } => {
             let w = config.find(&workspace)?;

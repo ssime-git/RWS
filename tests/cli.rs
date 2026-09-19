@@ -326,3 +326,60 @@ fn doctor_and_mount_reject_installed_but_broken_sshfs() {
         );
     }
 }
+
+#[test]
+fn fskit_mount_uses_native_volume_path_and_explicit_backend() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, std::path::Path::new("/Volumes/RWS-unit-test"));
+    let out = run(&config, &["mount", "demo", "--fskit", "--dry-run"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(
+        value["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "backend=fskit")
+    );
+    let other = temp.path().join("other.json");
+    register(&other, &temp.path().join("mount"));
+    assert!(
+        !run(&other, &["mount", "demo", "--fskit", "--dry-run"])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn successful_sshfs_exit_without_volume_is_a_mount_failure() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, &temp.path().join("mount"));
+    let fake = temp.path().join("sshfs");
+    std::fs::write(&fake, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_rws"))
+        .arg("--config")
+        .arg(&config)
+        .args(["mount", "demo"])
+        .env("PATH", temp.path())
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "an exit code alone cannot prove the mount exists"
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no mounted filesystem"));
+}
