@@ -3,7 +3,7 @@
 ## Verified locally
 
 - Rust 1.98.1 build and test execution on Apple Silicon macOS using installed Command Line Tools.
-- 10 automated integration tests passing: 3 core tests and 7 CLI tests.
+- 11 automated integration tests passing: 3 core tests and 8 CLI tests.
 - `cargo fmt --check` and `cargo clippy --locked --all-targets -- -D warnings` passing.
 - Independent code review identified mount-root alias overlap; a failing regression test reproduced it and the fix now resolves existing ancestors before comparing roots.
 - Missing SSHFS produces a clear error without creating the mount directory.
@@ -33,3 +33,7 @@ These checks validate remote execution, not editing through the filesystem mount
 The initial build used a temporary Rust installation without changing the user's shell profile. A normal Rust installation is needed for future builds after temporary files are removed. The compiled `target/debug/rws` can be run directly now.
 
 On this machine, setting `DEVELOPER_DIR=/Library/Developer/CommandLineTools` permits use of the installed compiler and Git without changing global Xcode settings or accepting a license on the user's behalf.
+
+## Default-shell correction
+
+The initial implementation forced `sh -l`. RWS now starts the remote `$SHELL` as a login shell. A regression test verifies shell selection and workspace positioning with quoted paths. On the authorized Linux host, the new session displays the configured Bash prompt and reports Bash running as a login shell.

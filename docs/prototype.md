@@ -35,7 +35,7 @@ Configuration defaults to `~/Library/Application Support/RWS/config.json` on mac
 
 Arguments following `--` are literals. For intentional shell syntax, invoke it explicitly: `rws exec --workspace demo -- sh -c 'printf hello'`. This executes on the remote host. Remote command quoting assumes a POSIX-compatible login shell; fish/csh are not supported in this prototype.
 
-RWS replaces itself with OpenSSH on Unix for command and terminal handling. `shell` requests a PTY and opens `sh -l`; use it for interactive coding-agent CLIs already installed and authenticated remotely. Noninteractive `exec` does not request a PTY. Disconnect persistence and cross-device reattachment are not implemented.
+RWS replaces itself with OpenSSH on Unix for command and terminal handling. `shell` requests a PTY and opens the remote `$SHELL` as a login shell (falling back to `/bin/sh` when unset); use it for interactive coding-agent CLIs already installed and authenticated remotely. Noninteractive `exec` does not request a PTY. Disconnect persistence and cross-device reattachment are not implemented.
 
 ## Mount and edit
 

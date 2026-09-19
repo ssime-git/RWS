@@ -1,5 +1,9 @@
 use clap::{Parser, Subcommand};
-use rws::{config::Config, transport::remote_command, workspace::Workspace};
+use rws::{
+    config::Config,
+    transport::{remote_command, remote_shell},
+    workspace::Workspace,
+};
 use std::{path::PathBuf, process::Command};
 
 #[derive(Parser)]
@@ -28,7 +32,7 @@ enum Action {
         #[arg(last = true, required = true)]
         command: Vec<String>,
     },
-    /// Open an interactive remote POSIX shell.
+    /// Open the remote user's default shell interactively.
     Shell {
         #[arg(long)]
         workspace: Option<String>,
@@ -186,7 +190,7 @@ fn run(cli: Cli) -> Result<i32, String> {
         }
         Action::Shell { workspace, dry_run } => {
             let (w, remote) = resolve(&config, workspace.as_deref())?;
-            let script = remote_command(&remote, &["sh".into(), "-l".into()])?;
+            let script = remote_shell(&remote)?;
             if !dry_run {
                 eprintln!("RWS remote shell: {}:{}", w.host, remote);
             }

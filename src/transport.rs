@@ -4,6 +4,17 @@ fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+/// Expand SHELL on the remote host, keeping its executable path a single word.
+pub fn remote_shell(directory: &str) -> Result<String, String> {
+    if !directory.starts_with('/') || directory.contains('\0') {
+        return Err("remote directory must be absolute and contain no NUL".into());
+    }
+    Ok(format!(
+        "cd {} && exec \"${{SHELL:-/bin/sh}}\" -l",
+        quote(directory)
+    ))
+}
+
 pub fn remote_command(directory: &str, argv: &[String]) -> Result<String, String> {
     if !directory.starts_with('/') || directory.contains('\0') {
         return Err("remote directory must be absolute and contain no NUL".into());

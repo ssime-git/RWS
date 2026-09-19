@@ -230,3 +230,53 @@ fn rejects_mount_overlap_through_parent_symlink_before_mount_exists() {
         "alias must not register the same physical mount twice"
     );
 }
+
+#[test]
+fn shell_launches_remote_default_shell_in_workspace() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    let remote = temp.path().join("remote ' workspace");
+    std::fs::create_dir(&remote).unwrap();
+    let shell = temp.path().join("custom shell");
+    std::fs::write(
+        &shell,
+        "#!/bin/sh\nprintf 'custom-shell:%s\\n' \"$1\"\npwd -P\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let out = run(
+        &config,
+        &[
+            "workspace",
+            "add",
+            "demo",
+            "--ssh",
+            "dev@server",
+            "--remote",
+            remote.to_str().unwrap(),
+            "--mount",
+            temp.path().join("mount").to_str().unwrap(),
+        ],
+    );
+    assert!(out.status.success());
+    let out = run(&config, &["shell", "--workspace", "demo", "--dry-run"]);
+    assert!(out.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let args = value["args"].as_array().unwrap();
+    assert!(args.iter().any(|v| v == "-t"));
+    let script = args.last().unwrap().as_str().unwrap();
+    let out = Command::new("/bin/sh")
+        .args(["-c", script])
+        .env("SHELL", &shell)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        format!(
+            "custom-shell:-l\n{}\n",
+            remote.canonicalize().unwrap().display()
+        )
+    );
+}
