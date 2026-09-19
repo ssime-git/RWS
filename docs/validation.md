@@ -219,3 +219,25 @@ accented directory and Delta-style Git metadata. These checks complement the
 live Delta diagnostic above; they do not establish network-failure recovery or
 persistent Finder sidebar integration. Private configuration and raw evidence
 remain excluded from Git.
+
+## Native app and release pipeline — 2026-09-20
+
+A SwiftUI frontend and development/signed-release GitHub workflows were added.
+The final Swift suite passed 15 tests; release tooling passed 7 tests.
+A local Apple silicon development bundle compiled, its Info.plist validated,
+its embedded CLI reported the expected version, and its ad-hoc code signature
+passed deep/strict verification. Release metadata/key-pair/publication tests
+passed, including refusing a mismatched key, refusing changes to a published
+release and preserving a draft after upload failure.
+
+The app launched and appeared in the running-app inventory, but the UI
+automation tool failed while reading its window; the graphical connect/open/
+disconnect flow has not been validated. The previous CLI and Delta diagnostic
+results do not substitute for this app acceptance test.
+
+No Apple Developer account was available. No public release, notarization or
+installed Sparkle update is claimed. Production release attempts require the
+configured keys and successful signing/notarization; development bundles have
+updates disabled. Production bundles enable automatic update checks but disable
+silent installation on quit; explicit installation is guarded by mount status.
+See [setup and remaining acceptance](macos-app.md).

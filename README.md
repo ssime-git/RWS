@@ -21,6 +21,9 @@ cargo build --locked
 ./target/debug/rws --help
 ```
 
+For the native macOS frontend, development builds and signed automatic release
+setup, see [the app and release guide](docs/macos-app.md).
+
 ## First prototype
 
 Validate one complete workflow: connect to an existing SSH host, mount a remote directory on macOS, edit a file locally, and run a command or interactive shell in the corresponding remote directory.

@@ -1,0 +1,85 @@
+name: Signed macOS release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: rws-production-release
+  cancel-in-progress: false
+jobs:
+  checks:
+    strategy:
+      matrix:
+        os: [macos-15, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - run: cargo +stable fmt --check
+      - run: cargo +stable test --locked
+      - run: cargo +stable clippy --locked --all-targets -- -D warnings
+      - run: python3 -m unittest discover -s tests/release
+  publish:
+    needs: checks
+    runs-on: macos-15
+    environment: release
+    permissions:
+      contents: write
+    env:
+      RWS_SPARKLE_PUBLIC_KEY: ${{ vars.RWS_SPARKLE_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check version and release prerequisites
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          CERTIFICATE: ${{ secrets.RWS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.RWS_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.RWS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.RWS_APPLE_ID }}
+          TEAM_ID: ${{ secrets.RWS_APPLE_TEAM_ID }}
+          APP_PASSWORD: ${{ secrets.RWS_APPLE_APP_PASSWORD }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.RWS_SPARKLE_PRIVATE_KEY }}
+        run: |
+          python3 scripts/macos_metadata.py --tag "$RELEASE_TAG"
+          python3 - <<'PY'
+          import os
+          names = ('CERTIFICATE', 'CERTIFICATE_PASSWORD', 'SIGNING_IDENTITY', 'APPLE_ID',
+                   'TEAM_ID', 'APP_PASSWORD', 'SPARKLE_PRIVATE_KEY', 'RWS_SPARKLE_PUBLIC_KEY')
+          missing = [name for name in names if not os.environ.get(name)]
+          if missing:
+              raise SystemExit('Configure release credentials before publishing: ' + ', '.join(missing))
+          PY
+      - run: rustup toolchain install stable --profile minimal
+      - run: rustup target add aarch64-apple-darwin
+      - run: swift test --package-path macos
+      - run: scripts/build-macos-app.sh production
+      - name: Sign and notarize
+        env:
+          RWS_CERTIFICATE_P12: ${{ secrets.RWS_CERTIFICATE_P12 }}
+          RWS_CERTIFICATE_PASSWORD: ${{ secrets.RWS_CERTIFICATE_PASSWORD }}
+          RWS_SIGNING_IDENTITY: ${{ secrets.RWS_SIGNING_IDENTITY }}
+          RWS_APPLE_ID: ${{ secrets.RWS_APPLE_ID }}
+          RWS_APPLE_TEAM_ID: ${{ secrets.RWS_APPLE_TEAM_ID }}
+          RWS_APPLE_APP_PASSWORD: ${{ secrets.RWS_APPLE_APP_PASSWORD }}
+        run: python3 scripts/sign-macos-release.py
+      - name: Generate signed update feed
+        env:
+          RWS_SPARKLE_PRIVATE_KEY: ${{ secrets.RWS_SPARKLE_PRIVATE_KEY }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/sparkle-tools"
+          curl --fail --location --proto '=https' --tlsv1.2 https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-2.10.0.tar.xz -o "$RUNNER_TEMP/sparkle-tools.tar.xz"
+          echo "c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c  $RUNNER_TEMP/sparkle-tools.tar.xz" | shasum -a 256 --check
+          tar -xf "$RUNNER_TEMP/sparkle-tools.tar.xz" -C "$RUNNER_TEMP/sparkle-tools"
+          swift scripts/verify-sparkle-key.swift
+          printf '%s' "$RWS_SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle-tools/bin/generate_appcast" --ed-key-file - --maximum-deltas 0 --download-url-prefix "https://github.com/ssime-git/RWS/releases/download/$RELEASE_TAG/" dist/publish
+          test -s dist/publish/appcast.xml
+          cd dist/publish
+          shasum -a 256 RWS-*.zip appcast.xml > SHA256SUMS
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 scripts/publish-release.py

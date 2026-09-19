@@ -2,3 +2,7 @@
 .DS_Store
 *.log
 .rws-local/
+/dist/
+/macos/.build/
+/macos/.swiftpm/
+__pycache__/
