@@ -52,7 +52,7 @@ rws unmount demo
 
 Install the CLI on PATH with `cargo install --path . --locked` if desired. A dry run prints the exact program and argument array without invoking SSH or creating a mount directory. Mounting refuses a nonempty directory or a symlink mount point. Mount lifecycle is delegated to SSHFS and the OS; this prototype has no daemon or automatic reconnect policy.
 
-`doctor` reports executable presence and optionally runs remote `pwd` with noninteractive SSH authentication. A missing mount dependency yields a nonzero result even if SSH works. It does not prove that macFUSE is loaded or a mount will succeed.
+`doctor` reports SSH/SFTP executable presence, verifies that `sshfs --version` succeeds, and optionally runs remote `pwd` with noninteractive SSH authentication. An SSHFS executable whose macFUSE library is missing is reported as unusable; mounting checks this before creating a mount directory. A missing mount dependency yields a nonzero result even if SSH works. It does not prove that macFUSE is loaded or a mount will succeed.
 
 ## Limits
 

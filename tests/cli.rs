@@ -280,3 +280,49 @@ fn shell_launches_remote_default_shell_in_workspace() {
         )
     );
 }
+
+#[test]
+fn doctor_and_mount_reject_installed_but_broken_sshfs() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    let root = temp.path().join("mount");
+    register(&config, &root);
+    for name in ["ssh", "sftp", "sshfs"] {
+        let file = temp.path().join(name);
+        let script = if name == "sshfs" {
+            "#!/bin/sh\necho 'Library not loaded: libfuse3.4.dylib' >&2\nexit 1\n"
+        } else {
+            "#!/bin/sh\nexit 0\n"
+        };
+        std::fs::write(&file, script).unwrap();
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_rws"))
+        .arg("--config")
+        .arg(&config)
+        .arg("doctor")
+        .env("PATH", temp.path())
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "doctor must not accept a broken SSHFS installation"
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("sshfs: unusable"));
+    if cfg!(target_os = "macos") {
+        let out = Command::new(env!("CARGO_BIN_EXE_rws"))
+            .arg("--config")
+            .arg(&config)
+            .args(["mount", "demo"])
+            .env("PATH", temp.path())
+            .output()
+            .unwrap();
+        assert!(!out.status.success());
+        assert!(String::from_utf8_lossy(&out.stderr).contains("macFUSE"));
+        assert!(
+            !root.exists(),
+            "failed prerequisite checks must not create a mount directory"
+        );
+    }
+}

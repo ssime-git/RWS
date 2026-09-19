@@ -109,6 +109,22 @@ fn available(program: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|path| std::env::split_paths(&path).any(|p| p.join(program).is_file()))
 }
+fn check_sshfs() -> Result<(), String> {
+    if !available("sshfs") {
+        return Err("SSHFS is missing. Install macFUSE and SSHFS; see docs/prototype.md".into());
+    }
+    let output = Command::new("sshfs")
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("SSHFS cannot start: {e}. Check the macFUSE/SSHFS installation"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "SSHFS is installed but unusable. Check the macFUSE/SSHFS installation: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
+}
 fn invoke(program: &str, args: &[String], dry_run: bool, replace: bool) -> Result<i32, String> {
     if dry_run {
         println!("{}", serde_json::json!({"program": program, "args": args}));
@@ -202,11 +218,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                 return Err("mount is currently supported on macOS only".into());
             }
             if !dry_run {
-                if !available("sshfs") {
-                    return Err(
-                        "SSHFS is missing. Install macFUSE and SSHFS; see docs/prototype.md".into(),
-                    );
-                }
+                check_sshfs()?;
                 if std::fs::symlink_metadata(&w.mount_root)
                     .is_ok_and(|m| m.file_type().is_symlink())
                 {
@@ -246,10 +258,17 @@ fn run(cli: Cli) -> Result<i32, String> {
         }
         Action::Doctor { workspace } => {
             let mut missing = false;
-            for tool in ["ssh", "sftp", "sshfs"] {
+            for tool in ["ssh", "sftp"] {
                 let found = available(tool);
                 println!("{tool}: {}", if found { "available" } else { "missing" });
                 missing |= !found;
+            }
+            match check_sshfs() {
+                Ok(()) => println!("sshfs: available and runnable"),
+                Err(error) => {
+                    println!("sshfs: unusable — {error}");
+                    missing = true;
+                }
             }
             if let Some(name) = workspace {
                 let w = config.find(&name)?;
