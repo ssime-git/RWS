@@ -262,3 +262,18 @@ The user supplied a screenshot establishing that the prior app window renders.
 Native UI automation still could not acquire the app window, so the revised
 startup UI requires a user relaunch check; helper/CLI checks are not claimed as
 a complete graphical mount test.
+
+## Finder automatic pinning — 2026-09-20
+
+The live acceptance checks added a disposable favorite twice, verified exactly one
+entry and unchanged other favorites, then removed the disposable entry. The existing
+verified Documents mount was also pinned twice with one resulting favorite. Native
+Finder UI inspection showed the entry under Favourites; clicking it displayed the
+existing remote root contents. The previously existing Locations entry was preserved.
+No active mount was disconnected for this test. Disconnect/remount and the complete
+new-workspace form flow are not claimed as end-to-end validated.
+
+A Swift ARC crash on the special last-item pointer was caught before shipping and
+fixed by passing that sentinel inside a C bridge. The final suite passed 23 tests.
+The API is deprecated, so pin failures remain explicit and manual Finder pinning is
+the fallback.

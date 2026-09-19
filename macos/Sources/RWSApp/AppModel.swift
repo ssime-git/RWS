@@ -171,8 +171,15 @@ final class AppModel: ObservableObject {
     }
 
     func add(name: String, host: String, remotePath: String, mountPath: String) async {
-        await perform(.add(config: configurationURL, name: name, host: host, remotePath: remotePath, mountPath: mountPath))
+        guard await perform(.add(config: configurationURL, name: name, host: host, remotePath: remotePath, mountPath: mountPath), refreshAfter: false) else { return }
         load()
+        selectedWorkspace = name
+        guard prerequisitesReady else {
+            alertMessage = "Espace enregistré. Configurez macFUSE et SSHFS pour le monter et l’ajouter au Finder."
+            await refreshStatus()
+            return
+        }
+        await openSelected()
     }
 
     func saveSettings(sshfs: String, fskit: Bool) async {
@@ -184,8 +191,14 @@ final class AppModel: ObservableObject {
     func openSelected() async {
         guard configurationReady, prerequisitesReady, let selectedWorkspace,
               let workspace = configuration.workspaces.first(where: { $0.name == selectedWorkspace }) else { return }
-        let succeeded = await perform(.connect(config: configurationURL, workspace: selectedWorkspace))
-        if succeeded { NSWorkspace.shared.open(URL(fileURLWithPath: workspace.mountRoot, isDirectory: true)) }
+        let succeeded = await perform(.connect(config: configurationURL, workspace: selectedWorkspace), refreshAfter: false)
+        if succeeded {
+            let folder = URL(fileURLWithPath: workspace.mountRoot, isDirectory: true)
+            do { try FinderSidebar.pin(folder) }
+            catch { alertMessage = "Le dossier est monté, mais son ajout à la barre latérale a échoué : \(error.localizedDescription) Dans le Finder, utilisez Fichier > Ajouter à la barre latérale." }
+            NSWorkspace.shared.open(folder)
+        }
+        await refreshStatus()
     }
 
     func disconnectSelected() async {

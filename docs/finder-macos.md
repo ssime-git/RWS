@@ -2,7 +2,22 @@
 
 This procedure records behavior observed on macOS 27.0 build 26A428 with macFUSE 5.4.0 and RWS SSHFS `3.7.5-rws-fskit3`. Labels can differ by macOS version or language. It is not a claim of compatibility with every Mac. Build and mount using [the prototype guide](prototype.md) and [patched SSHFS instructions](sshfs-fskit.md) first.
 
-## Show the mounted volume in the left sidebar
+## Automatic pinning in the RWS app
+
+The app's **Ajouter** action registers the workspace, connects it, and pins the
+mounted folder under Finder **Favourites**. **Ouvrir dans le Finder** also refreshes
+this favorite after a successful connection. A failed connection never pins an
+unmounted path; missing prerequisites leave the space registered with an explanation.
+A pinning failure is reported separately while the mounted folder still opens.
+
+This uses Apple's deprecated shared-file-list API, isolated behind a small native
+bridge, with read-back verification. Repeated pinning of the same mounted URL was
+verified to create only one favorite. Other favorites are preserved. An existing
+entry under Locations may still be visible as well; RWS does not remove it.
+Disconnect unmounts the filesystem and leaves Finder to manage the offline entry.
+A complete disconnect/remount acceptance cycle remains unverified.
+
+## Manual fallback: show the mounted volume in the left sidebar
 
 1. Open Finder > Settings (Réglages) > Sidebar (Barre latérale).
 2. Under Locations (Emplacements), inspect **Connected servers**, **External disks**, and **Hard disks** (Serveurs connectés, Disques externes, Disques durs). Record the initial checkbox states. A mixed checkbox is not fully enabled. If the user wants these categories visible, enable them; this may show other disks too. An agent needs authorization for preference changes unless already provided in the current setup session.
@@ -12,7 +27,7 @@ This procedure records behavior observed on macOS 27.0 build 26A428 with macFUSE
 
 On the tested Mac, Connected servers was already enabled; Hard disks and External disks were mixed. Enabling both disk categories did **not** automatically add RWS. Adding the selected volume explicitly produced the working Locations entry. RWS is a remote mounted filesystem; it is not a physical disk and is not forced into local-disk mode. No Full Disk Access grant is needed for this Finder setup.
 
-These are per-user Finder preferences. RWS does not set them automatically. Restore their recorded previous states if the user asks to undo the display changes. Removing a sidebar shortcut does not unmount the filesystem or delete remote files; ejecting does unmount it.
+These are per-user Finder preferences. RWS does not change these display categories automatically. Restore their recorded previous states if the user asks to undo the display changes. Removing a sidebar shortcut does not unmount the filesystem or delete remote files; ejecting does unmount it.
 
 ## After an unmount/remount
 

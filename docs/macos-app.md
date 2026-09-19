@@ -141,3 +141,10 @@ not prove FSKit activation or remote connectivity; actual mount verification
 still runs on **Ouvrir dans le Finder**. Dependency failures disable Open, while
 Disconnect remains available. The installation link opens the official macFUSE
 site; RWS does not silently install packages or change system extensions.
+
+### Finder sidebar
+
+Ajouter now saves, connects and pins the workspace under Finder Favourites. Opening
+an existing workspace also refreshes its favorite. Pin failures are reported without
+hiding a successful mount. Disconnect does not delete the favorite or remote data.
+See [Finder behavior and limits](finder-macos.md).
