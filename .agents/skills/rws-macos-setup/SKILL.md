@@ -7,7 +7,7 @@ description: Use when an agent needs to install, configure, validate, or trouble
 
 Bring a fresh Mac to a verified remote-workspace workflow. Record separate results for build, SSH execution, filesystem mount, Finder edits, and unmount. Passing unit tests or `rws doctor` does not prove mounting works.
 
-Read the checkout's `docs/prototype.md` and `docs/validation.md` before starting. This skill is stored three directories below the repository root. Do not depend on another machine's `.rws-local`, temporary Rust installation, account names, SSH keys, or cached package downloads. The FSKit end-to-end path has not passed acceptance: basic I/O works on one Mac, but rename fails and the mount command remains open. Use the validation record, not assumptions of prior success.
+Read the checkout's `docs/prototype.md` and `docs/validation.md` before starting. This skill is stored three directories below the repository root. Do not depend on another machine's `.rws-local`, temporary Rust installation, account names, SSH keys, or cached package downloads. The current corrected path has passed a real RWS mount/file-operation/unmount cycle on one Mac using an experimental SSHFS build. Full editor and recovery acceptance is still pending. Use the validation record, not assumptions of prior success.
 
 ## Inputs and evidence
 
@@ -44,6 +44,8 @@ Check `sshfs --version` actually runs. A file present on PATH is insufficient: `
 
 For FSKit, verify the installed macOS/package combination supports it. The prototype's `--fskit` route uses a direct child of `/Volumes`. Enable the macFUSE FSKit module through System Settings > General > Login Items & Extensions; exact labels vary with macOS. Kernel-extension approval and reducing startup security are not FSKit setup steps. Do not switch to the legacy kernel backend merely because FSKit activation fails.
 
+For the diagnosed macOS 27/macFUSE 5.4/SSHFS 3.7.5 combination, follow `docs/sshfs-fskit.md`: run the pinned-source build script and select its output with `RWS_SSHFS`. The script verifies hashes, preserves source and license, and never replaces system SSHFS. It needs existing GLib development files; install missing dependencies only when needed. Record the selected binary in private setup notes.
+
 ## 3. Isolated workspace
 
 Select a unique workspace name and unused `/Volumes/RWS-...` path. Use an empty, dedicated remote directory; with user authorization, `mktemp -d /tmp/rws-test.XXXXXX` on the remote host can provide one. Record its exact returned path. Do not use a remote home directory or valuable project for write/failure tests.
@@ -68,7 +70,7 @@ The interactive shell runs remotely and uses the remote `$SHELL`; the terminal w
 open /Volumes/RWS-setup-test
 ```
 
-macFUSE creates the FSKit mount point; do not create it with sudo or relax `/Volumes` permissions. On the currently tested stack, the mount command remains open: use a separate terminal to inspect and unmount. Do not wait indefinitely or claim success from silence. Confirm the actual mounted filesystem. SSHFS has been observed returning zero when mounting failed; RWS now checks the device boundary. `doctor` only checks prerequisite execution and optional SSH connectivity.
+macFUSE creates the FSKit mount point; do not create it with sudo or relax `/Volumes` permissions. RWS starts foreground-mode SSHFS in a separate process group and returns on readiness. Startup errors or a 30-second polling timeout identify a private log beside the config. SSH authentication and host trust must already work with BatchMode; mounting has no credential prompt. Confirm the actual mounted filesystem. SSHFS has been observed returning zero when mounting failed; RWS now checks the device boundary. `doctor` only checks prerequisite execution and optional SSH connectivity.
 
 Create a uniquely named text file through the mount, read it independently using `rws exec`, test rename and replace of a disposable file, edit/save it in a local editor, and confirm the new contents remotely. Basic writes do not validate editors that save using atomic rename. If rename fails, reproduce with direct SSHFS on the same isolated directory to separate the RWS wrapper from the filesystem stack; record the failure rather than hiding it with copy/delete. Test a nested-directory command using an absolute path to the built RWS binary and an absolute `--config` path after changing directory. Verify remote changes become visible locally, recording observed delays. Keep failures separate from successes.
 

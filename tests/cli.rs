@@ -383,3 +383,29 @@ fn successful_sshfs_exit_without_volume_is_a_mount_failure() {
     );
     assert!(String::from_utf8_lossy(&out.stderr).contains("no mounted filesystem"));
 }
+
+#[test]
+fn fskit_uses_selected_binary_in_foreground() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, std::path::Path::new("/Volumes/RWS-unit-test"));
+    let output = Command::new(env!("CARGO_BIN_EXE_rws"))
+        .arg("--config")
+        .arg(&config)
+        .args(["mount", "demo", "--fskit", "--dry-run"])
+        .env("RWS_SSHFS", "/tmp/custom sshfs")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["program"], "/tmp/custom sshfs");
+    let args = value["args"].as_array().unwrap();
+    assert!(args.iter().any(|v| v == "-f"));
+    assert!(
+        args.iter()
+            .any(|v| v.as_str().is_some_and(|s| s.contains("BatchMode=yes")))
+    );
+}

@@ -2,7 +2,7 @@
 
 RWS aims to make remote development workspaces accessible from macOS while keeping files and command execution on the machine that owns each workspace.
 
-**Status: early Rust CLI prototype. Remote execution works on a tested Linux SSH host. FSKit mounting, basic file reads/writes, and unmount have been exercised, but rename fails on the tested macOS stack and mount does not return promptly. Local editor/Finder workflows are not yet validated.**
+**Status: early Rust CLI prototype. Remote execution and a real FSKit mount/read/write/rename/unmount cycle have passed on a tested Mac and Linux SSH host. FSKit currently requires the experimental SSHFS build described below; broad editor and recovery validation remains pending.**
 
 ## Try it
 
@@ -23,6 +23,7 @@ The remote machine remains the source of truth. The prototype will use existing 
 
 - [Decisions and prototype scope](docs/decisions.md)
 - [Roadmap](ROADMAP.md)
+- [Experimental FSKit-compatible SSHFS](docs/sshfs-fskit.md)
 - [Validation results and remaining checks](docs/validation.md)
 - [Agent skill: set up RWS on a new Mac](.agents/skills/rws-macos-setup/SKILL.md)
 

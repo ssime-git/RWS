@@ -112,11 +112,15 @@ fn available(program: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|path| std::env::split_paths(&path).any(|p| p.join(program).is_file()))
 }
+fn sshfs_program() -> String {
+    std::env::var("RWS_SSHFS").unwrap_or_else(|_| "sshfs".into())
+}
 fn check_sshfs() -> Result<(), String> {
-    if !available("sshfs") {
+    let program = sshfs_program();
+    if !available(&program) {
         return Err("SSHFS is missing. Install macFUSE and SSHFS; see docs/prototype.md".into());
     }
-    let output = Command::new("sshfs")
+    let output = Command::new(&program)
         .arg("--version")
         .output()
         .map_err(|e| format!("SSHFS cannot start: {e}. Check the macFUSE/SSHFS installation"))?;
@@ -271,19 +275,40 @@ fn run(cli: Cli) -> Result<i32, String> {
                 format!("{}:{}", w.host, w.remote_root),
                 w.mount_root.to_string_lossy().into_owned(),
                 "-o".into(),
-                "ConnectTimeout=10,ServerAliveInterval=15,ServerAliveCountMax=3".into(),
+                "ConnectTimeout=10,ServerAliveInterval=15,ServerAliveCountMax=3,BatchMode=yes"
+                    .into(),
             ];
             if fskit {
                 args.extend(["-o".into(), "backend=fskit".into()]);
             }
-            let code = invoke("sshfs", &args, dry_run, false)?;
-            if !dry_run && code == 0 {
-                if !mounted_filesystem(&w.mount_root) {
-                    return Err("SSHFS exited but no mounted filesystem was found. Check its diagnostics and macFUSE extension settings".into());
-                }
-                println!("Mounted {} at {}", w.name, w.mount_root.display());
+            args.push("-f".into());
+            let program = sshfs_program();
+            if dry_run {
+                return invoke(&program, &args, true, false);
             }
-            Ok(code)
+            let logs = path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(std::path::Path::new("."))
+                .join("mount-logs");
+            std::fs::create_dir_all(&logs).map_err(|e| format!("create log directory: {e}"))?;
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| e.to_string())?
+                .as_nanos();
+            let log = logs.join(format!("{}-{}-{stamp}.log", w.name, std::process::id()));
+            let mut command = Command::new(&program);
+            command.args(&args);
+            let _server = rws::mount::start(
+                &mut command,
+                &log,
+                std::time::Duration::from_secs(30),
+                || mounted_filesystem(&w.mount_root),
+            )?;
+            // SSHFS continues independently and exits when the OS unmounts its volume.
+            println!("Mounted {} at {}", w.name, w.mount_root.display());
+            eprintln!("SSHFS log: {}", log.display());
+            Ok(0)
         }
         Action::Unmount { workspace, dry_run } => {
             let w = config.find(&workspace)?;

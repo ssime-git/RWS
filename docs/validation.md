@@ -1,9 +1,11 @@
 # Prototype validation — 2026-09-19
 
+Latest result: the [FSKit corrections](sshfs-fskit.md) are implemented and a real RWS file-operation cycle passes using the isolated patched SSHFS build. Earlier failure records below are preserved as diagnostic history; full editor and recovery acceptance remain outstanding.
+
 ## Verified locally
 
 - Rust 1.98.1 build and test execution on Apple Silicon macOS using installed Command Line Tools.
-- 14 automated integration tests passing: 3 core tests and 11 CLI tests.
+- 19 automated tests passing: 4 lifecycle tests, 3 core tests and 12 CLI tests.
 - `cargo fmt --check` and `cargo clippy --locked --all-targets -- -D warnings` passing.
 - Independent code review identified mount-root alias overlap; a failing regression test reproduced it and the fix now resolves existing ancestors before comparing roots.
 - Missing SSHFS produces a clear error without creating the mount directory.
@@ -60,7 +62,7 @@ Observed against an isolated remote temporary directory:
 - The rename failure also occurs with direct SSHFS `-f` and `-d`, without RWS. The debug trace advertises server POSIX rename support but shows no outgoing rename request for the failed operation. This narrows investigation to the local filesystem stack; it does not establish which component is responsible.
 - Finder opens the volume, but its captured contents view is empty despite the files being accessible by path. Finder/editor acceptance has not passed.
 - `rws unmount` returns zero and the OS mount entry disappears. Remote test data remains available.
-- The ordinary `rws mount --fskit` command stays open while the volume is mounted, with SSHFS fork warnings. After unmount it reports no mounted filesystem. Its synchronous child-process lifecycle still needs correction; do not interpret this delayed error as proof that the preceding I/O did not occur.
+- The ordinary `rws mount --fskit` command stays open while the volume is mounted, with SSHFS fork warnings. After unmount it reports no mounted filesystem. This was the synchronous child-process lifecycle defect, corrected in the implementation below; do not interpret this delayed error as proof that the preceding I/O did not occur.
 
 Raw screenshots and SSHFS traces are retained in ignored `.rws-local/diagnostics/`; they are not public README assets. The dedicated remote test directory is retained for diagnosis. The terminal's temporary Full Disk Access switch was turned off; the user then confirmed quitting it and a process check found no running Ghostty process, completing removal of this temporary grant.
 
@@ -71,3 +73,17 @@ The repository includes `.agents/skills/rws-macos-setup/SKILL.md`, linked from r
 ## First GitHub CI run
 
 [Run 35415731910](https://github.com/ssime-git/RWS/actions/runs/35415731910) passed on both `macos-latest` and `ubuntu-latest` for commit `0885718`: formatting, locked tests, and Clippy with warnings denied. This validates the automated suite, not FSKit mounting or Finder editing.
+
+## Implemented FSKit corrections
+
+- `RWS_SSHFS` selects a custom executable for mount and doctor; the system installation remains untouched.
+- `scripts/build-sshfs-fskit.sh` completed from pinned downloaded sources with verified hashes. Its compiled output was used for the real acceptance run.
+- RWS mount returned zero in approximately 0.5 seconds while the actual volume stayed mounted.
+- Create/read/fsync, rename, replace-existing, delete, and `renamex_np(RENAME_EXCL)` refusing overwrite passed. Independent SSH read confirmed the saved data.
+- RWS unmount returned zero; the volume entry and its SSHFS process disappeared.
+- A review reproduced an early-exit orphan. A failing regression test was added; `waitid(WNOWAIT)` now retains the child PID until group cleanup and the regression passes.
+- Timeout, early exit (including exit zero), startup diagnostics, private log creation, live-child readiness and executable selection have automated coverage.
+
+These tests do not validate every editor, concurrent remote writes, or network interruption recovery. Raw screenshots remain private.
+
+Final-binary follow-up: nested working-directory mapping through the live mount passed. A nonexistent remote directory returned an error with the precise SSHFS diagnostic in its private log; no test volume or SSHFS process remained. Finder displayed the saved files (`10-rws-lifecycle-fixed.png`, private). SSHFS still emits its preexisting file-descriptor/fork warnings into the log; these are not claimed fixed.

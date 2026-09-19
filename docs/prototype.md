@@ -39,7 +39,7 @@ RWS replaces itself with OpenSSH on Unix for command and terminal handling. `she
 
 ## Mount and edit
 
-**Current test limitation:** on the tested macOS 27.0 / macFUSE 5.4.0 / SSHFS 3.7.5 stack, reads and writes work but rename fails, Finder browsing is not validated, and `mount --fskit` stays open. Run `unmount` from a separate terminal when testing. Do not use this path for valuable project edits yet. See the [validation record](validation.md).
+On the tested macOS 27.0 / macFUSE 5.4.0 stack, use the [experimental SSHFS build](sshfs-fskit.md) to enable rename support. RWS now returns when the mounted filesystem is detected while SSHFS continues in the background. Full editor and recovery acceptance remains pending.
 
 ```sh
 ./target/debug/rws mount demo --fskit --dry-run
@@ -52,7 +52,7 @@ rws exec -- pwd
 rws unmount demo
 ```
 
-Install the CLI on PATH with `cargo install --path . --locked` if desired. A dry run prints the exact program and argument array without invoking SSH or creating a mount directory. Mounting refuses a nonempty directory or a symlink mount point. `--fskit` selects the user-space backend and requires a direct child of `/Volumes`; macFUSE creates the mount directory. Enable its FSKit module in System Settings > General > Login Items & Extensions. Without this flag, SSHFS uses its default backend. RWS rejects an already-mounted path and verifies a filesystem device boundary after SSHFS returns; a zero exit code without a volume is an error. Mount lifecycle is delegated to SSHFS and the OS; this prototype has no daemon or automatic reconnect policy.
+Install the CLI on PATH with `cargo install --path . --locked` if desired. A dry run prints the exact program and argument array without invoking SSH or creating a mount directory. Mounting refuses a nonempty directory or a symlink mount point. `--fskit` selects the user-space backend and requires a direct child of `/Volumes`; macFUSE creates the mount directory. Enable its FSKit module in System Settings > General > Login Items & Extensions. Without this flag, SSHFS uses its default backend. RWS rejects an already-mounted path and verifies a filesystem device boundary while foreground-mode SSHFS remains alive. Startup has a 30-second polling deadline; errors identify a private log beside the configuration. SSHFS runs in its own process group and exits on OS unmount. Authentication must already work noninteractively. This prototype has no RWS daemon or automatic reconnect policy.
 
 `doctor` reports SSH/SFTP executable presence, verifies that `sshfs --version` succeeds, and optionally runs remote `pwd` with noninteractive SSH authentication. An SSHFS executable whose macFUSE library is missing is reported as unusable; mounting checks this before creating a mount directory. A missing mount dependency yields a nonzero result even if SSH works. It does not prove that macFUSE is loaded or a mount will succeed.
 
