@@ -12,7 +12,7 @@ Requires macOS Command Line Tools, installed macFUSE headers/libraries, Python 3
 
 The script downloads six files from official SSHFS commit `9e35c39ba83f54a49a9df4bf0a629f26c60cc38c` (3.7.5), verifies individual SHA-256 values, applies guarded capability and filename-conversion patches, and compiles into a unique `.rws-local/sshfs/build.XXXXXX` directory. It retains the modified source and upstream GPL notice beside the executable. This is a reproducible source-and-patch procedure, not a guarantee of identical binaries across compiler/library versions. Build dependencies remain dynamically linked; rebuilding may be necessary after their removal or upgrade.
 
-The rename patch clears `FUSE_DARWIN_CAP_RENAME_EXT` in `sshfs_init`. It does not silently ignore flags supplied to the rename callback and does not emulate rename using copy/delete. The resulting binary identifies as `3.7.5-rws-fskit2`; it is experimental, not an official SSHFS release.
+The rename patch clears `FUSE_DARWIN_CAP_RENAME_EXT` in `sshfs_init`. It does not silently ignore flags supplied to the rename callback and does not emulate rename using copy/delete. The resulting binary identifies as `3.7.5-rws-fskit3`; it is experimental, not an official SSHFS release.
 
 The script prints an exact `export RWS_SSHFS=...` command. Run it in the shell used for RWS, then:
 
@@ -45,3 +45,11 @@ SSHFS directory/attribute caching and FUSE attribute/entry/negative timeouts are
 Volumes are named `RWS-WORKSPACE`. A successful mount does not guarantee an entry under Finder's Locations. On the tested Mac, enabling Hard disks and External disks (with user approval) was insufficient; Connected servers was already enabled. Finder's Computer view showed a browsable remote volume throughout.
 
 For the current mount, open Finder > Go > Computer, select the RWS volume, then File > Add to Sidebar. This produced a Locations entry with an eject button. After an unmount/remount the entry disappeared in a new Finder window; repeat this action if necessary. Automatic sidebar persistence remains unresolved. RWS does not change Finder preferences or represent the remote filesystem as a local disk.
+
+## Repeated directory enumeration
+
+The first Unicode build disabled SSHFS's cache wrapper but reused an exhausted SFTP directory cursor on subsequent reads. On the tested FSKit stack, the root handle persists: the first listing succeeded, later listings were empty, while mkdir still created directories on the server. Version `3.7.5-rws-fskit3` opens and closes a private SFTP handle per Unicode-mode enumeration and disables FUSE `nullpath_ok` because reopening requires a path. The original directory handle remains untouched. This preserves cache invalidation without returning EOF for every subsequent root listing. See the [FUSE callback contract](https://libfuse.github.io/doxygen/structfuse__operations.html).
+
+Run `python3 scripts/test-mount-listing.py /Volumes/RWS-test` on an authorized mounted root. It creates a unique disposable directory, repeatedly checks root and child listings during Unicode file creation/deletion, and cleans up after success. On failure it retains its test directory for diagnosis. This is a live macFUSE acceptance check, separate from Cargo tests.
+
+After remounting, a stale sidebar entry may also report that its original item cannot be found. Remove that entry using its context menu, then add the current volume from Computer again. Verify by clicking the sidebar entry and creating a folder, not just by observing the icon.

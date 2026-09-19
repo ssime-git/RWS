@@ -47,4 +47,37 @@ replace_once("\tif(sshfs.dir_cache)\n\t\tsshfs.op = cache_wrap(&sshfs_oper);",
 replace_once("\t// SFTP only supports 1-second time resolution",
              "\tif (sshfs.rws_unicode) {\n\t\tcfg->attr_timeout = 0;\n\t\tcfg->entry_timeout = 0;\n\t\tcfg->negative_timeout = 0;\n\t}\n\n\t// SFTP only supports 1-second time resolution")
 
+# FSKit can retain the root directory handle across enumerations. Without the
+# cache wrapper, another offset-zero read otherwise reuses an exhausted SFTP
+# cursor. A private handle per enumeration also avoids sharing cursor state
+# between simultaneous readers; the original opendir handle is left untouched.
+replace_once("static int sshfs_readdir(const char *path, void *dbuf, fuse_fill_dir_t filler,",
+             "static int sshfs_releasedir(const char *path, struct fuse_file_info *fi);\n\nstatic int sshfs_readdir(const char *path, void *dbuf, fuse_fill_dir_t filler,")
+replace_once("\t(void) path; (void) flags;\n\tint err;\n\tstruct dir_handle *handle;\n\n\thandle = (struct dir_handle*) fi->fh;",
+'''\t(void) flags;
+\tint err;
+\tstruct dir_handle *handle;
+\tstruct fuse_file_info fresh = {0};
+\tif (sshfs.rws_unicode) {
+\t\terr = sshfs_opendir(path, &fresh);
+\t\tif (err)
+\t\t\treturn err;
+\t\tfi = &fresh;
+\t}
+\thandle = (struct dir_handle*) fi->fh;''')
+replace_once("\treturn err;\n}\n\nstatic int sshfs_releasedir(const char *path, struct fuse_file_info *fi)\n{",
+'''\tif (sshfs.rws_unicode) {
+\t\tint close_err = sshfs_releasedir(path, &fresh);
+\t\tif (!err)
+\t\t\terr = close_err;
+\t}
+\treturn err;
+}
+
+static int sshfs_releasedir(const char *path, struct fuse_file_info *fi)
+{''')
+
+replace_once("cfg->nullpath_ok = !(sshfs.truncate_workaround || sshfs.fstat_workaround);",
+             "cfg->nullpath_ok = !(sshfs.rws_unicode || sshfs.truncate_workaround || sshfs.fstat_workaround);")
+
 path.write_text(source)

@@ -254,7 +254,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             }
             if !dry_run {
                 let version = check_sshfs()?;
-                if fskit && !raw_names && !version.contains("3.7.5-rws-fskit2") {
+                if fskit && !raw_names && !version.contains("3.7.5-rws-fskit3") {
                     return Err("FSKit Unicode support requires the RWS SSHFS build: run scripts/build-sshfs-fskit.sh and set RWS_SSHFS to its output. Use --raw-names only for intentional unconverted filename access".into());
                 }
                 if mounted_filesystem(&w.mount_root) {

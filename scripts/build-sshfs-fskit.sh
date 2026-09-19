@@ -29,7 +29,7 @@ ce2d863daf29a8fef50cc9d53324918a9c033afd9622c8a0ad74a22b8155c749 cache.h
 CHECKSUMS
 /usr/bin/python3 "$repo_root/scripts/patch-sshfs.py" "$build_dir/sshfs.c"
 cat > "$build_dir/config.h" <<'CONFIG'
-#define PACKAGE_VERSION "3.7.5-rws-fskit2"
+#define PACKAGE_VERSION "3.7.5-rws-fskit3"
 #define IDMAP_DEFAULT "user"
 CONFIG
 xcrun clang -DFUSE_DARWIN_ENABLE_EXTENSIONS=0 -DFUSE_USE_VERSION=31 \
@@ -40,6 +40,6 @@ xcrun clang -DFUSE_DARWIN_ENABLE_EXTENSIONS=0 -DFUSE_USE_VERSION=31 \
   -L/usr/local/lib -lfuse3 -L"$glib_prefix/lib" -lglib-2.0 -lgthread-2.0 \
   -framework Foundation -o "$build_dir/sshfs"
 # Keep exact modified sources and GPL notice beside the experimental executable.
-printf '%s\n' "Upstream: $source_commit" "Patches: disable unsupported extended rename; opt-in GLib NFC/NFD filename conversion" > "$build_dir/BUILD-INFO.txt"
+printf '%s\n' "Upstream: $source_commit" "Patches: disable unsupported extended rename; opt-in GLib NFC/NFD filename conversion; fresh directory enumeration handles" > "$build_dir/BUILD-INFO.txt"
 printf 'Built experimental SSHFS (system executable unchanged):\n%s\n' "$build_dir/sshfs"
 printf 'Use in this shell:\nexport RWS_SSHFS=%q\n' "$build_dir/sshfs"
