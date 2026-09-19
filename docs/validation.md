@@ -5,7 +5,7 @@ Latest result: the [FSKit corrections](sshfs-fskit.md) are implemented and a rea
 ## Verified locally
 
 - Rust 1.98.1 build and test execution on Apple Silicon macOS using installed Command Line Tools.
-- 19 automated tests passing: 4 lifecycle tests, 3 core tests and 12 CLI tests.
+- 21 automated tests passing: 4 lifecycle tests, 3 core tests and 14 CLI tests.
 - `cargo fmt --check` and `cargo clippy --locked --all-targets -- -D warnings` passing.
 - Independent code review identified mount-root alias overlap; a failing regression test reproduced it and the fix now resolves existing ancestors before comparing roots.
 - Missing SSHFS produces a clear error without creating the mount directory.
@@ -24,7 +24,7 @@ These checks validate remote execution, not editing through the filesystem mount
 
 ## Not yet verified
 
-- Reliable Finder browsing/editing/saving and cache behavior. Basic mounting and I/O now work, but rename and the mount command lifecycle remain blocked as detailed below.
+- Full editor save workflows and concurrent remote-edit cache behavior. Basic Finder browsing, rename, Unicode filenames and the mount lifecycle passed the follow-ups below.
 - PTY resize and Ctrl+C under a long-running job, interrupted remote writes, and network-loss recovery.
 - Coding-agent launch: no agent was installed or authenticated as part of these checks.
 - Second host, transfer behavior, and performance targets from v0.1.
@@ -87,3 +87,17 @@ The repository includes `.agents/skills/rws-macos-setup/SKILL.md`, linked from r
 These tests do not validate every editor, concurrent remote writes, or network interruption recovery. Raw screenshots remain private.
 
 Final-binary follow-up: nested working-directory mapping through the live mount passed. A nonexistent remote directory returned an error with the precise SSHFS diagnostic in its private log; no test volume or SSHFS process remained. Finder displayed the saved files (`10-rws-lifecycle-fixed.png`, private). SSHFS still emits its preexisting file-descriptor/fork warnings into the log; these are not claimed fixed.
+
+## Follow-up on a remote Documents directory
+
+A newly authorized Documents mount was exercised inside a uniquely created test subdirectory. Standard and exclusive creation with ASCII names, spaces in paths, UTF-8 file contents, fsync/readback, rename, replacing an existing target, no-replace protection, deletion of test files, nested CWD mapping, and remote exit code 37 passed. The final file's SHA-256 matched an independent remote read.
+
+A filename containing composed accented characters failed: exclusive creation reported EEXIST while leaving an empty file remotely; subsequent ordinary opening reported ENOENT. ASCII exclusive creation passed, so this is not established as a general O_EXCL failure. Finder omitted the accented entry while listing the ordinary test file. At this stage Unicode filename handling was a confirmed limitation; the subsequent correction is recorded below. Avoid treating this run as full filesystem compatibility validation.
+
+The requested Documents volume and test file were retained for user inspection. Exact paths, checksums, and a Finder screenshot are stored only in ignored local diagnostics. Existing user files were not selected for mutation. Network fault injection was not performed on this broader user-data mount.
+
+## Unicode and Finder follow-up
+
+The final `3.7.5-rws-fskit2` build passed exclusive creation, NFC/NFD reads, accented/Japanese/emoji filenames, rename, replacement, accented symlinks, and independent SSH SHA-256 comparison inside a new disposable Documents subdirectory. Both NFC-to-NFD and NFD-to-NFC alias sequences passed write/read/stat/unlink checks after disabling byte-keyed metadata caches. A pre-fix test reproduced stale existence after unlink; the final build reports the file absent. See [the conversion contract and performance tradeoff](sshfs-fskit.md#unicode-filenames); arbitrary existing remote naming schemes are not validated.
+
+Finder displays the accented/emoji test file. With approved disk categories enabled, adding the selected volume through File > Add to Sidebar shows it under Locations with an eject button. The entry disappeared following remount and was added again for the retained final mount. Automatic sidebar persistence is not fixed. Private captures `12-unicode-fixed-finder.png` and `13-unicode-and-sidebar.png` record these states. The final Documents mount and test files remain available; no further privacy grant was used.

@@ -10,9 +10,9 @@ Requires macOS Command Line Tools, installed macFUSE headers/libraries, Python 3
 ./scripts/build-sshfs-fskit.sh
 ```
 
-The script downloads six files from official SSHFS commit `9e35c39ba83f54a49a9df4bf0a629f26c60cc38c` (3.7.5), verifies individual SHA-256 values, applies one guarded change to capability negotiation, and compiles into a unique `.rws-local/sshfs/build.XXXXXX` directory. It retains the modified source and upstream GPL notice beside the executable. This is a reproducible source-and-patch procedure, not a guarantee of identical binaries across compiler/library versions. Build dependencies remain dynamically linked; rebuilding may be necessary after their removal or upgrade.
+The script downloads six files from official SSHFS commit `9e35c39ba83f54a49a9df4bf0a629f26c60cc38c` (3.7.5), verifies individual SHA-256 values, applies guarded capability and filename-conversion patches, and compiles into a unique `.rws-local/sshfs/build.XXXXXX` directory. It retains the modified source and upstream GPL notice beside the executable. This is a reproducible source-and-patch procedure, not a guarantee of identical binaries across compiler/library versions. Build dependencies remain dynamically linked; rebuilding may be necessary after their removal or upgrade.
 
-The only patch clears `FUSE_DARWIN_CAP_RENAME_EXT` in `sshfs_init`. It does not silently ignore flags supplied to the rename callback and does not emulate rename using copy/delete. The resulting binary identifies as `3.7.5-rws-fskit1`; it is experimental, not an official SSHFS release.
+The rename patch clears `FUSE_DARWIN_CAP_RENAME_EXT` in `sshfs_init`. It does not silently ignore flags supplied to the rename callback and does not emulate rename using copy/delete. The resulting binary identifies as `3.7.5-rws-fskit2`; it is experimental, not an official SSHFS release.
 
 The script prints an exact `export RWS_SSHFS=...` command. Run it in the shell used for RWS, then:
 
@@ -31,3 +31,17 @@ RWS runs SSHFS with `-f` in a separate process group, redirects diagnostics to a
 Mounting uses SSH `BatchMode=yes` with closed stdin. Prepare authentication (for example, an unlocked SSH agent) and known-host trust through a normal SSH connection beforehand. RWS does not prompt for credentials in the background. Early exit and timeout return an error pointing to the log and stop/reap the startup process group, including SSH descendants. Process cleanup uses a still-reserved group-leader PID, not a stored PID file. Readiness metadata and forced process termination still depend on OS responsiveness.
 
 Validated: live RWS mount returns, read/write/fsync, rename, replacing an existing file, no-replace refusing an existing target, independent remote content checks, and normal unmount with SSHFS exit. This does not yet establish all editor save patterns, concurrent modifications, or recovery from network loss. Test on disposable data first.
+
+## Unicode filenames
+
+FSKit mounts now enable the patched binary's `rws_unicode` option. GLib converts local child paths to NFC for SFTP and directory entries/link targets to NFD for macOS. The configured remote root is preserved verbatim. This addresses accented filenames that previously produced EEXIST/ENOENT and disappeared from Finder. Accents, Japanese and emoji passed live create/read/rename/replace tests. macOS UTF-8-MAC iconv was rejected after a supplementary-plane emoji failed a round trip; this build uses GLib instead.
+
+**Contract:** existing remote child filenames must be valid UTF-8 in NFC form. Existing NFD names, invalid UTF-8, or directories containing canonically equivalent names are not supported by this conversion. No existing server names are renamed automatically. `mount WORKSPACE --fskit --raw-names` disables conversion for intentional raw access, but does not fix Finder's Unicode limitations. The standard system SSHFS is rejected before mounting in conversion mode; rebuild and select the printed `RWS_SSHFS` path.
+
+SSHFS directory/attribute caching and FUSE attribute/entry/negative timeouts are disabled in conversion mode because byte-keyed caches retained stale metadata between NFC/NFD aliases. Bidirectional write/stat/unlink checks pass with this correction. This increases metadata requests; performance and concurrent remote-edit behavior remain unvalidated.
+
+## Finder sidebar
+
+Volumes are named `RWS-WORKSPACE`. A successful mount does not guarantee an entry under Finder's Locations. On the tested Mac, enabling Hard disks and External disks (with user approval) was insufficient; Connected servers was already enabled. Finder's Computer view showed a browsable remote volume throughout.
+
+For the current mount, open Finder > Go > Computer, select the RWS volume, then File > Add to Sidebar. This produced a Locations entry with an eject button. After an unmount/remount the entry disappeared in a new Finder window; repeat this action if necessary. Automatic sidebar persistence remains unresolved. RWS does not change Finder preferences or represent the remote filesystem as a local disk.

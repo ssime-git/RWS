@@ -409,3 +409,52 @@ fn fskit_uses_selected_binary_in_foreground() {
             .any(|v| v.as_str().is_some_and(|s| s.contains("BatchMode=yes")))
     );
 }
+
+#[test]
+fn mount_converts_unicode_names_and_labels_volume() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, std::path::Path::new("/Volumes/RWS-unit-test"));
+    let output = run(&config, &["mount", "demo", "--fskit", "--dry-run"]);
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let args = value["args"].as_array().unwrap();
+    for option in ["rws_unicode", "volname=RWS-demo"] {
+        assert!(args.iter().any(|v| v == option), "missing {option}");
+    }
+    let output = run(
+        &config,
+        &["mount", "demo", "--fskit", "--raw-names", "--dry-run"],
+    );
+    assert!(output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("rws_unicode"));
+}
+
+#[test]
+fn fskit_normalization_requires_compatible_sshfs_before_mounting() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(
+        &config,
+        std::path::Path::new("/Volumes/RWS-incompatible-test"),
+    );
+    let fake = temp.path().join("sshfs");
+    std::fs::write(&fake, "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'SSHFS version 3.7.5'; exit 0; fi\necho should-not-run >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_rws"))
+        .arg("--config")
+        .arg(config)
+        .args(["mount", "demo", "--fskit"])
+        .env("RWS_SSHFS", fake)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("build-sshfs-fskit.sh"));
+}

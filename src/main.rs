@@ -47,6 +47,9 @@ enum Action {
         /// Use the macFUSE FSKit backend; requires a direct child of /Volumes.
         #[arg(long)]
         fskit: bool,
+        /// Disable UTF-8 NFC remote / NFD local filename conversion.
+        #[arg(long)]
+        raw_names: bool,
     },
     Unmount {
         workspace: String,
@@ -115,7 +118,7 @@ fn available(program: &str) -> bool {
 fn sshfs_program() -> String {
     std::env::var("RWS_SSHFS").unwrap_or_else(|_| "sshfs".into())
 }
-fn check_sshfs() -> Result<(), String> {
+fn check_sshfs() -> Result<String, String> {
     let program = sshfs_program();
     if !available(&program) {
         return Err("SSHFS is missing. Install macFUSE and SSHFS; see docs/prototype.md".into());
@@ -130,7 +133,11 @@ fn check_sshfs() -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    Ok(())
+    Ok(format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    ))
 }
 fn mounted_filesystem(path: &std::path::Path) -> bool {
     #[cfg(unix)]
@@ -236,6 +243,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             workspace,
             dry_run,
             fskit,
+            raw_names,
         } => {
             let w = config.find(&workspace)?;
             if !cfg!(target_os = "macos") {
@@ -245,7 +253,10 @@ fn run(cli: Cli) -> Result<i32, String> {
                 return Err("FSKit requires a mount point directly under /Volumes".into());
             }
             if !dry_run {
-                check_sshfs()?;
+                let version = check_sshfs()?;
+                if fskit && !raw_names && !version.contains("3.7.5-rws-fskit2") {
+                    return Err("FSKit Unicode support requires the RWS SSHFS build: run scripts/build-sshfs-fskit.sh and set RWS_SSHFS to its output. Use --raw-names only for intentional unconverted filename access".into());
+                }
                 if mounted_filesystem(&w.mount_root) {
                     return Err("a filesystem is already mounted at this path".into());
                 }
@@ -281,6 +292,10 @@ fn run(cli: Cli) -> Result<i32, String> {
             if fskit {
                 args.extend(["-o".into(), "backend=fskit".into()]);
             }
+            if fskit && !raw_names {
+                args.extend(["-o".into(), "rws_unicode".into()]);
+            }
+            args.extend(["-o".into(), format!("volname=RWS-{}", w.name)]);
             args.push("-f".into());
             let program = sshfs_program();
             if dry_run {
@@ -330,7 +345,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                 missing |= !found;
             }
             match check_sshfs() {
-                Ok(()) => println!("sshfs: available and runnable"),
+                Ok(_) => println!("sshfs: available and runnable"),
                 Err(error) => {
                     println!("sshfs: unusable — {error}");
                     missing = true;
