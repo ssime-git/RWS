@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var model: AppModel
+    @State private var agentExecutable = "claude"
     @State private var name = ""
     @State private var host = ""
     @State private var remotePath = ""
@@ -23,6 +24,14 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     startupStatus
                     workspaceControls
+                    HStack {
+                        TextField("Agent installé sur la VM", text: $agentExecutable)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: 230)
+                        Button("Lancer sur la VM") { Task { await model.launchAgent(agentExecutable) } }
+                            .disabled(model.selectedWorkspace == nil || !model.configurationReady || agentExecutable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    Text("Exécutable distant : claude, codex, opencode… Le terminal affiche l’hôte et le dossier avant le lancement.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Divider()
                     addWorkspace
                     Divider()

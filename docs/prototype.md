@@ -81,3 +81,24 @@ Use a dedicated test directory on an authorized host. Mount it, create and edit 
 ## FSKit switches that do not activate
 
 A similar activation issue is tracked in [macFUSE issue #1194](https://github.com/macfuse/macfuse/issues/1194). Registration does not prove enablement. A community workaround edits the FSKit enabled-module preference and restarts its service. A user-authorized, backed-up repair enabled a real mount on one test Mac; this is not a general setup guarantee and is not performed automatically by RWS. Follow the repository setup skill for diagnosis and temporary-permission cleanup. Do not treat the legacy kernel-extension setup as a required step for FSKit.
+
+## Agents installed on the VM
+
+`rws agent --workspace demo -- claude` (or `codex`, `opencode`, another executable)
+uses SSH with a PTY and the remote user's login shell. It loads the remote login
+profile, changes to the configured remote directory afterwards, prints the remote
+host/OS/directory on stderr and execs the requested agent there. Arguments after
+`--` are literal. `--no-tty` supports noninteractive diagnostics such as `--version`.
+The remote login shell must support POSIX `-lc` semantics. Executables must be
+installed and available in that remote environment; no local PATH or credentials
+are copied. Missing agents and failed SSH connections return errors, with no local
+fallback. An agent can still perform its own network operations according to its
+remote configuration.
+
+The RWS app provides an executable field and **Lancer sur la VM** for the selected
+workspace. It opens a private launcher in macOS Terminal, which hosts SSH; the
+agent runs on the VM. Enter just the executable name or its absolute remote path,
+not a shell command with flags. CLI users can supply additional literal arguments.
+The mount is not required for this explicit remote launch. Independent local IDE
+agent buttons are not intercepted by this feature. Sessions do not persist after
+SSH disconnect unless managed separately on the VM.

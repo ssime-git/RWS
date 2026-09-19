@@ -277,3 +277,22 @@ A Swift ARC crash on the special last-item pointer was caught before shipping an
 fixed by passing that sentinel inside a C bridge. The final suite passed 23 tests.
 The API is deprecated, so pin failures remain explicit and manual Finder pinning is
 the fallback.
+
+## Remote agent launch — 2026-09-20
+
+Direct non-login `exec -- claude --version` and the equivalent Codex/OpenCode/Gemini
+checks failed with exit 127 on the VM because SSH's default PATH omitted their
+user installations. The dedicated `agent` route now loads the remote login shell.
+Live checks through that route returned Linux, the expected remote hostname and
+workspace directory. Remote Python observed child PIDs/executable links via Linux
+`/proc` and successful versions for Claude Code 2.1.274, codex-cli 0.154.0,
+OpenCode 1.18.31 and Gemini 0.60.0. A PTY launch of Claude's version command also
+passed. An absent agent returned 127; a fake-SSH regression returned 255 without
+executing the locally available fake agent. Argument quoting and the app launcher
+were tested, including shell metacharacters in executable/config paths.
+
+These checks prove remote process startup, not authenticated inference, agent tool
+execution, or the complete graphical button flow. No paid model request was sent.
+Independent agents launched from a Mac IDE remain local unless explicitly configured
+for remote execution. The app's terminal window is local; the launched agent is on
+the configured SSH host. No automatic local fallback is implemented.

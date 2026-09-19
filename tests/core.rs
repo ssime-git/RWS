@@ -88,3 +88,35 @@ fn command_round_trips_literal_arguments_through_posix_shell() {
     assert!(remote_command("/tmp", &[]).is_err());
     assert!(remote_command("/tmp", &["bad\0arg".into()]).is_err());
 }
+
+#[test]
+fn agent_login_shell_preserves_arguments_and_failure() {
+    use rws::transport::remote_agent;
+    use std::process::Command;
+    let tmp = tempfile::tempdir().unwrap();
+    let value = "literal ' $(touch NEVER) ; spaced";
+    let script = remote_agent(
+        tmp.path().to_str().unwrap(),
+        &["printf".into(), "%s".into(), value.into()],
+    )
+    .unwrap();
+    let result = Command::new("/bin/sh")
+        .env("SHELL", "/bin/sh")
+        .args(["-c", &script])
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8(result.stdout).unwrap(), value);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("RWS remote identity"));
+    let script = remote_agent("/", &["rws-agent-that-does-not-exist".into()]).unwrap();
+    assert_eq!(
+        Command::new("/bin/sh")
+            .env("SHELL", "/bin/sh")
+            .args(["-c", &script])
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(127)
+    );
+}

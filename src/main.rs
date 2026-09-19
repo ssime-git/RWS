@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use rws::{
     config::Config,
-    transport::{remote_command, remote_shell},
+    transport::{remote_agent, remote_command, remote_shell},
     workspace::Workspace,
 };
 use std::{path::PathBuf, process::Command};
@@ -63,6 +63,18 @@ enum Action {
         git_context: bool,
         #[arg(long)]
         dry_run: bool,
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
+    /// Launch an installed agent in the remote login environment. Never runs locally.
+    Agent {
+        #[arg(long)]
+        workspace: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+        /// Disable PTY allocation for noninteractive diagnostics.
+        #[arg(long)]
+        no_tty: bool,
         #[arg(last = true, required = true)]
         command: Vec<String>,
     },
@@ -439,6 +451,19 @@ fn run(cli: Cli) -> Result<i32, String> {
                 eprintln!("RWS remote: {}:{}", w.host, remote);
             }
             invoke("ssh", &ssh_args(&w.host, script, false), dry_run, true)
+        }
+        Action::Agent {
+            workspace,
+            dry_run,
+            no_tty,
+            command,
+        } => {
+            let (w, remote) = resolve(&config, workspace.as_deref())?;
+            let script = remote_agent(&remote, &command)?;
+            if !dry_run {
+                eprintln!("RWS agent on VM: {}:{}", w.host, remote);
+            }
+            invoke("ssh", &ssh_args(&w.host, script, !no_tty), dry_run, true)
         }
         Action::Shell { workspace, dry_run } => {
             let (w, remote) = resolve(&config, workspace.as_deref())?;

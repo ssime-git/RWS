@@ -82,6 +82,21 @@ pub fn bounded_output(
     result.map(|_| output)
 }
 
+/// Start the executable only inside the remote login environment. Change directory
+/// after profiles run, since they may change cwd. Diagnostics go to stderr.
+pub fn remote_agent(directory: &str, argv: &[String]) -> Result<String, String> {
+    remote_command(directory, argv)?;
+    let cd = format!("cd {}", quote(directory));
+    let exec = argv.iter().map(|v| quote(v)).collect::<Vec<_>>().join(" ");
+    let inner = format!(
+        "{cd} && {{ printf 'RWS remote identity: ' >&2; hostname >&2; uname -s >&2; pwd >&2; }} && exec {exec}"
+    );
+    Ok(format!(
+        "exec \"${{SHELL:-/bin/sh}}\" -lc {}",
+        quote(&inner)
+    ))
+}
+
 #[cfg(test)]
 mod probe_tests {
     #[test]

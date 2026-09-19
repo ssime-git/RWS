@@ -148,3 +148,15 @@ Ajouter now saves, connects and pins the workspace under Finder Favourites. Open
 an existing workspace also refreshes its favorite. Pin failures are reported without
 hiding a successful mount. Disconnect does not delete the favorite or remote data.
 See [Finder behavior and limits](finder-macos.md).
+
+### Launch a remote agent
+
+Select a workspace, enter `claude`, `codex`, `opencode`, `gemini` or an absolute
+remote executable path, then click **Lancer sur la VM**. Terminal opens an SSH
+session and displays the remote identity before starting the agent. The executable
+is resolved in the VM's login environment, never on the Mac. Missing agents and
+SSH failures remain visible in Terminal. Authentication must already be configured
+on the VM. This does not redirect agents independently launched by local IDEs.
+The private launcher files live under `Application Support/RWS/AgentLaunchers`;
+they contain paths/workspace names, not credentials, and are retained so an open
+Terminal can safely finish launching. They may be removed once the session starts.

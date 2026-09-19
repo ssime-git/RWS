@@ -738,3 +738,38 @@ fn missing_registry_cannot_authorize_local_fallback() {
     assert!(!out.status.success());
     assert!(!String::from_utf8_lossy(&out.stdout).contains("local"));
 }
+
+#[test]
+fn agent_always_uses_ssh_and_never_falls_back_locally() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config.json");
+    register(&config, &tmp.path().join("mount"));
+    let dry = run(
+        &config,
+        &["agent", "--workspace", "demo", "--dry-run", "--", "claude"],
+    );
+    assert!(
+        dry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&dry.stdout).unwrap();
+    assert_eq!(value["program"], "ssh");
+    assert_eq!(value["args"][0], "-t");
+    let ssh = tmp.path().join("ssh");
+    std::fs::write(&ssh, "#!/bin/sh\nexit 255\n").unwrap();
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let local = tmp.path().join("claude");
+    std::fs::write(&local, "#!/bin/sh\necho LOCAL_AGENT_MUST_NOT_RUN\n").unwrap();
+    std::fs::set_permissions(&local, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_rws"))
+        .env("PATH", tmp.path())
+        .arg("--config")
+        .arg(&config)
+        .args(["agent", "--workspace", "demo", "--", "claude"])
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(255));
+    assert!(result.stdout.is_empty());
+}

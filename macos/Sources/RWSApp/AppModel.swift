@@ -206,6 +206,21 @@ final class AppModel: ObservableObject {
         await perform(.disconnect(config: configurationURL, workspace: selectedWorkspace))
     }
 
+    func launchAgent(_ executable: String) async {
+        let executable = executable.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard configurationReady, !isBusy, !updatesPreparing, !executable.isEmpty,
+              !executable.hasPrefix("-"), !executable.contains("\0"), let selectedWorkspace else { return }
+        isBusy = true
+        await updateGuard.beginOperation()
+        do {
+            try await AgentLauncher.launch(binary: cliURL, config: configurationURL,
+                                           workspace: selectedWorkspace, executable: executable)
+            output = "Terminal distant ouvert pour \(selectedWorkspace). Le terminal affichera le résultat de la connexion et l’identité de la VM."
+        } catch { alertMessage = error.localizedDescription }
+        await updateGuard.endOperation()
+        isBusy = false
+    }
+
     func installDeltaRules() async { await perform(.deltaRules(config: configurationURL)) }
 
     func refreshStatus() async {
