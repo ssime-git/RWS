@@ -458,3 +458,283 @@ fn fskit_normalization_requires_compatible_sshfs_before_mounting() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("build-sshfs-fskit.sh"));
 }
+
+#[test]
+fn saved_mount_settings_are_reused_without_environment_variables() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, std::path::Path::new("/Volumes/RWS-settings-test"));
+    let out = run(
+        &config,
+        &[
+            "settings",
+            "--sshfs",
+            "/tmp/custom sshfs",
+            "--backend",
+            "fskit",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = run(&config, &["connect", "demo", "--dry-run"]);
+    assert_eq!(out.status.success(), cfg!(target_os = "macos"));
+    if cfg!(target_os = "macos") {
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["program"], "/tmp/custom sshfs");
+        assert!(
+            value["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "backend=fskit")
+        );
+    }
+    assert!(run(&config, &["workspace", "list"]).status.success());
+}
+
+#[test]
+fn status_distinguishes_mount_from_execution_and_disconnect_is_repeatable() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, &temp.path().join("mount"));
+    let out = run(&config, &["status", "demo", "--no-probe"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains(if cfg!(target_os = "macos") {
+            "disconnected"
+        } else {
+            "unavailable"
+        }),
+        "{text}"
+    );
+    assert!(text.contains("not redirected"), "{text}");
+    if cfg!(target_os = "macos") {
+        for _ in 0..2 {
+            assert!(run(&config, &["disconnect", "demo"]).status.success());
+        }
+    }
+}
+
+#[test]
+fn shortcuts_preserve_quoted_paths_and_do_not_overwrite() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config ' $(touch BAD).json");
+    register(&config, &temp.path().join("mount"));
+    let directory = temp.path().join("shortcuts");
+    let args = [
+        "shortcuts",
+        "demo",
+        "--directory",
+        directory.to_str().unwrap(),
+    ];
+    let out = run(&config, &args);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let script = directory.join("Status-demo.command");
+    assert_eq!(
+        std::fs::metadata(&script).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    let out = Command::new("/bin/bash")
+        .arg(&script)
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    // SSH can fail; the script must still resolve the correct config, not default HOME.
+    assert!(String::from_utf8_lossy(&out.stdout).contains("dev@server"));
+    assert!(!temp.path().join("BAD").exists());
+    assert!(!run(&config, &args).status.success());
+}
+
+#[test]
+fn invalid_settings_and_locked_settings_preserve_configuration() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, &temp.path().join("mount"));
+    let before = std::fs::read(&config).unwrap();
+    assert!(
+        !run(&config, &["settings", "--sshfs", "relative/path"])
+            .status
+            .success()
+    );
+    assert_eq!(std::fs::read(&config).unwrap(), before);
+    std::fs::write(config.with_extension("lock"), "held").unwrap();
+    assert!(
+        !run(&config, &["settings", "--backend", "fskit"])
+            .status
+            .success()
+    );
+    assert_eq!(std::fs::read(&config).unwrap(), before);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn connect_and_disconnect_refuse_an_unrelated_os_mount() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, std::path::Path::new("/System/Volumes/Data"));
+    for action in ["connect", "disconnect"] {
+        let out = run(&config, &[action, "demo"]);
+        assert!(!out.status.success());
+        assert!(String::from_utf8_lossy(&out.stderr).contains("unverified"));
+    }
+}
+
+#[test]
+fn simultaneous_lifecycle_operation_is_rejected() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, &temp.path().join("mount"));
+    let state = config.with_file_name("config.json.mount-state");
+    std::fs::create_dir(&state).unwrap();
+    std::fs::write(state.join("demo.lock"), "active").unwrap();
+    let out = run(&config, &["disconnect", "demo"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("operation lock"));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn mount_identity_resolves_parent_aliases() {
+    let temp = tempfile::tempdir().unwrap();
+    let alias = temp.path().join("volumes");
+    std::os::unix::fs::symlink("/System/Volumes", &alias).unwrap();
+    let direct = rws::lifecycle::identity(std::path::Path::new("/System/Volumes/Data")).unwrap();
+    assert!(direct.is_some());
+    assert_eq!(
+        rws::lifecycle::identity(&alias.join("Data")).unwrap(),
+        direct
+    );
+}
+
+#[test]
+fn shortcuts_support_workspace_names_starting_with_dash() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, &temp.path().join("mount"));
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+    value["workspaces"][0]["name"] = "-demo".into();
+    std::fs::write(&config, serde_json::to_vec(&value).unwrap()).unwrap();
+    let directory = temp.path().join("shortcuts");
+    let out = run(
+        &config,
+        &[
+            "shortcuts",
+            "--directory",
+            directory.to_str().unwrap(),
+            "--",
+            "-demo",
+        ],
+    );
+    assert!(out.status.success());
+    let out = Command::new("/bin/bash")
+        .arg(directory.join("Status--demo.command"))
+        .env("PATH", temp.path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("dev@server"));
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("unexpected argument"));
+    let out = Command::new("/bin/bash")
+        .arg(directory.join("Shell-VM--demo.command"))
+        .env("PATH", temp.path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&out.stderr).contains("RWS remote shell"));
+}
+
+#[test]
+fn explicit_cwd_routes_commands_and_never_falls_back_locally() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    let root = temp.path().join("mount");
+    std::fs::create_dir_all(root.join("other-project/src")).unwrap();
+    register(&config, &root);
+    let out = run(
+        &config,
+        &[
+            "exec",
+            "--cwd",
+            root.join("other-project/src").to_str().unwrap(),
+            "--git-context",
+            "--dry-run",
+            "--",
+            "printf",
+            "$(touch LOCAL)",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["program"], "ssh");
+    let script = value["args"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .as_str()
+        .unwrap();
+    assert!(script.contains("/other-project/src"));
+    assert!(script.contains("'$(touch LOCAL)'"));
+    let marker = temp.path().join("must-not-exist");
+    let out = run(
+        &config,
+        &[
+            "exec",
+            "--cwd",
+            temp.path().to_str().unwrap(),
+            "--git-context",
+            "--",
+            "touch",
+            marker.to_str().unwrap(),
+        ],
+    );
+    assert!(!out.status.success());
+    assert!(!marker.exists());
+    let out = run(
+        &config,
+        &["context", "--cwd", temp.path().to_str().unwrap()],
+    );
+    assert!(out.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["mode"], "local");
+    // A registered directory alone does not prove a real mounted workspace.
+    assert!(
+        !run(&config, &["context", "--cwd", root.to_str().unwrap()])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn missing_registry_cannot_authorize_local_fallback() {
+    let temp = tempfile::tempdir().unwrap();
+    let missing = temp.path().join("missing.json");
+    let out = run(
+        &missing,
+        &["context", "--cwd", temp.path().to_str().unwrap()],
+    );
+    assert!(!out.status.success());
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("local"));
+}

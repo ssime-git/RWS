@@ -8,6 +8,10 @@ RWS aims to make remote development workspaces accessible from macOS while keepi
 
 See the [prototype guide](docs/prototype.md) for build commands, workspace registration, remote execution, mounting prerequisites, and current limitations.
 
+For saved connection settings, double-click shortcuts, mount status, and the
+distinction between remote files and Delta's local commands, see
+[connect and execute on the VM](docs/connection.md).
+
 ```sh
 cargo build --locked
 ./target/debug/rws --help

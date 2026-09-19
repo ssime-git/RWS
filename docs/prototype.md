@@ -39,6 +39,12 @@ RWS replaces itself with OpenSSH on Unix for command and terminal handling. `she
 
 ## Mount and edit
 
+Use the [connection guide](connection.md) for `connect`, `disconnect`, `status`,
+saved backend settings and Finder-launchable shortcuts. `mount`/`unmount` remain
+aliases. Mount identity verification now uses a disposable remote proof file and
+therefore requires a writable workspace root. Existing volumes can be verified
+with `connect NAME --verify-existing` without disconnecting them.
+
 On the tested macOS 27.0 / macFUSE 5.4.0 stack, use the [experimental SSHFS build](sshfs-fskit.md) for rename, Unicode filenames, and repeated directory listings. RWS now returns when the mounted filesystem is detected while SSHFS continues in the background. Full editor and recovery acceptance remains pending.
 
 ```sh
@@ -52,7 +58,7 @@ rws exec -- pwd
 rws unmount demo
 ```
 
-Install the CLI on PATH with `cargo install --path . --locked` if desired. A dry run prints the exact program and argument array without invoking SSH or creating a mount directory. Mounting refuses a nonempty directory or a symlink mount point. `--fskit` selects the user-space backend and requires a direct child of `/Volumes`; macFUSE creates the mount directory. Enable its FSKit module in System Settings > General > Login Items & Extensions. Without this flag, SSHFS uses its default backend. RWS rejects an already-mounted path and verifies a filesystem device boundary while foreground-mode SSHFS remains alive. Startup has a 30-second polling deadline; errors identify a private log beside the configuration. SSHFS runs in its own process group and exits on OS unmount. Authentication must already work noninteractively. This prototype has no RWS daemon or automatic reconnect policy.
+Install the CLI on PATH with `cargo install --path . --locked` if desired. A dry run prints the exact program and argument array without invoking SSH or creating a mount directory. Mounting refuses a nonempty directory or a symlink mount point. `--fskit` selects the user-space backend and requires a direct child of `/Volumes`; macFUSE creates the mount directory. Enable its FSKit module in System Settings > General > Login Items & Extensions. Without this flag or a saved FSKit setting, SSHFS uses its default backend. An already verified mount succeeds without remounting; an unrecognized volume requires explicit verification. Startup checks a filesystem device boundary while foreground-mode SSHFS remains alive, then verifies the remote destination through a disposable proof file. Startup has a 30-second polling deadline; errors identify a private log beside the configuration. SSHFS runs in its own process group and exits on OS unmount. Authentication must already work noninteractively. This prototype has no RWS daemon or automatic reconnect policy.
 
 `doctor` reports SSH/SFTP executable presence, verifies that `sshfs --version` succeeds, and optionally runs remote `pwd` with noninteractive SSH authentication. An SSHFS executable whose macFUSE library is missing is reported as unusable; mounting checks this before creating a mount directory. A missing mount dependency yields a nonzero result even if SSH works. It does not prove that macFUSE is loaded or a mount will succeed.
 
@@ -62,7 +68,7 @@ For the left sidebar, follow [Finder configuration and acceptance](finder-macos.
 
 - The CLI implements a subset of the original v0.1 specification.
 - No unified Finder volume, bounded-cache guarantee, write atomicity guarantee, offline mode, or custom filesystem.
-- No application launcher, PATH shims, port manager, transfer engine, remote daemon, or persistent sessions.
+- No application execution redirection, PATH shims, port manager, transfer engine, remote daemon, or persistent sessions. Generated Finder shortcuts launch RWS commands, including an explicitly remote shell.
 - `workspace list` and dry runs emit JSON. There is no global `--json` mode yet; command stdout/stderr are streamed unchanged, with execution location on stderr.
 - Local environment forwarding is left to the user's SSH configuration; RWS adds no environment forwarding or credential copying.
 - SSHFS/macFUSE behavior, filesystem latency, interruption handling, and Finder saves still require physical end-to-end validation.

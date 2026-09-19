@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use rws::{
     config::Config,
     transport::{remote_command, remote_shell},
@@ -19,6 +19,35 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Action {
+    /// Describe whether a filesystem directory belongs to a verified RWS mount.
+    Context {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+    },
+    /// Install conditional forwarding rules in Delta's personal instructions.
+    DeltaRules {
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Remember this machine's mount backend and SSHFS executable.
+    Settings {
+        #[arg(long)]
+        sshfs: Option<String>,
+        #[arg(long, value_enum)]
+        backend: Option<Backend>,
+    },
+    /// Show mount identity separately from SSH reachability and execution.
+    Status {
+        workspace: Option<String>,
+        #[arg(long)]
+        no_probe: bool,
+    },
+    /// Create Finder shortcuts, including an explicitly remote terminal.
+    Shortcuts {
+        workspace: String,
+        #[arg(long)]
+        directory: PathBuf,
+    },
     Workspace {
         #[command(subcommand)]
         action: WorkspaceAction,
@@ -27,6 +56,11 @@ enum Action {
     Exec {
         #[arg(long)]
         workspace: Option<String>,
+        #[arg(long, conflicts_with = "workspace")]
+        cwd: Option<PathBuf>,
+        /// Map this repository's Git metadata for this invocation only.
+        #[arg(long, conflicts_with = "workspace")]
+        git_context: bool,
         #[arg(long)]
         dry_run: bool,
         #[arg(last = true, required = true)]
@@ -40,8 +74,12 @@ enum Action {
         dry_run: bool,
     },
     /// Mount a registered workspace (requires SSHFS/macFUSE on macOS).
+    #[command(name = "connect", visible_alias = "mount")]
     Mount {
         workspace: String,
+        /// Verify and adopt an existing volume using a disposable remote file.
+        #[arg(long)]
+        verify_existing: bool,
         #[arg(long)]
         dry_run: bool,
         /// Use the macFUSE FSKit backend; requires a direct child of /Volumes.
@@ -51,6 +89,7 @@ enum Action {
         #[arg(long)]
         raw_names: bool,
     },
+    #[command(name = "disconnect", visible_alias = "unmount")]
     Unmount {
         workspace: String,
         #[arg(long)]
@@ -61,6 +100,11 @@ enum Action {
         #[arg(long)]
         workspace: Option<String>,
     },
+}
+#[derive(Clone, Copy, ValueEnum)]
+enum Backend {
+    Default,
+    Fskit,
 }
 #[derive(Subcommand)]
 enum WorkspaceAction {
@@ -111,15 +155,24 @@ fn resolve(config: &Config, name: Option<&str>) -> Result<(Workspace, String), S
     }
     Ok(matches.into_iter().next().unwrap())
 }
+fn require_verified_mount(config: &std::path::Path, w: &Workspace) -> Result<(), String> {
+    let actual = rws::lifecycle::identity(&w.mount_root)?
+        .ok_or("RWS workspace is disconnected; connect it before forwarding commands")?;
+    if !rws::lifecycle::verified(config, w, &actual) {
+        return Err("RWS mount identity is unverified; use connect NAME --verify-existing before forwarding commands".into());
+    }
+    Ok(())
+}
 fn available(program: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|path| std::env::split_paths(&path).any(|p| p.join(program).is_file()))
 }
-fn sshfs_program() -> String {
-    std::env::var("RWS_SSHFS").unwrap_or_else(|_| "sshfs".into())
+fn sshfs_program(config: &Config) -> String {
+    std::env::var("RWS_SSHFS")
+        .unwrap_or_else(|_| config.mount.sshfs.clone().unwrap_or_else(|| "sshfs".into()))
 }
-fn check_sshfs() -> Result<String, String> {
-    let program = sshfs_program();
+fn check_sshfs(config: &Config) -> Result<String, String> {
+    let program = sshfs_program(config);
     if !available(&program) {
         return Err("SSHFS is missing. Install macFUSE and SSHFS; see docs/prototype.md".into());
     }
@@ -207,8 +260,133 @@ fn run(cli: Cli) -> Result<i32, String> {
         println!("Registered {name}");
         return Ok(0);
     }
-    let config = Config::load(&path)?;
+    let strict_routing = matches!(
+        &cli.command,
+        Action::Context { .. }
+            | Action::Exec { cwd: Some(_), .. }
+            | Action::Exec {
+                git_context: true,
+                ..
+            }
+    );
+    let config = if strict_routing {
+        Config::load_existing(&path)?
+    } else {
+        Config::load(&path)?
+    };
     match cli.command {
+        Action::DeltaRules { output } => {
+            let target = match output {
+                Some(p) => p,
+                None => rws::agent_rules::default_delta_rules_path()?,
+            };
+            let config = path
+                .canonicalize()
+                .map_err(|e| format!("config path: {e}"))?;
+            let binary = std::env::current_exe().map_err(|e| e.to_string())?;
+            rws::agent_rules::install(&config, &binary, &target)?;
+            println!("Global Delta RWS rules installed in {}", target.display());
+            println!(
+                "Rules guide agent commands; they do not intercept Delta's internal processes."
+            );
+            Ok(0)
+        }
+        Action::Context { cwd } => {
+            let cwd = match cwd {
+                Some(p) => p,
+                None => std::env::current_dir().map_err(|e| e.to_string())?,
+            };
+            match rws::routing::resolve_directory(&config, &cwd)? {
+                None => println!("{}", serde_json::json!({"mode":"local","cwd":cwd})),
+                Some((w, remote)) => {
+                    require_verified_mount(&path, &w)?;
+                    println!(
+                        "{}",
+                        serde_json::json!({"mode":"remote","workspace":w.name,"host":w.host,"cwd":cwd,"remote_cwd":remote,"mount_verified":true})
+                    );
+                }
+            }
+            Ok(0)
+        }
+        Action::Settings { sshfs, backend } => {
+            let mut options = config.mount;
+            if let Some(sshfs) = sshfs {
+                options.sshfs = Some(sshfs);
+            }
+            if let Some(backend) = backend {
+                options.fskit = matches!(backend, Backend::Fskit);
+            }
+            Config::set_mount_options(&path, options)?;
+            println!("Mount settings saved in {}", path.display());
+            Ok(0)
+        }
+        Action::Shortcuts {
+            workspace,
+            directory,
+        } => {
+            config.find(&workspace)?;
+            rws::shortcuts::create(&path, &workspace, &directory)?;
+            println!("Shortcuts created in {}", directory.display());
+            Ok(0)
+        }
+        Action::Status {
+            workspace,
+            no_probe,
+        } => {
+            let selected = match workspace {
+                Some(name) => vec![config.find(&name)?],
+                None => config.workspaces.iter().collect(),
+            };
+            let mut failed = false;
+            for w in selected {
+                let state = match rws::lifecycle::identity(&w.mount_root) {
+                    Ok(None) => "disconnected".to_string(),
+                    Ok(Some(ref actual)) if rws::lifecycle::verified(&path, w, actual) => {
+                        "connected (verified RWS mount)".into()
+                    }
+                    Ok(Some(_)) => {
+                        "mounted (identity unverified; not managed by this configuration)".into()
+                    }
+                    Err(e) => format!("unavailable: {e}"),
+                };
+                println!(
+                    "{}: {state}\n  VM: {}:{}\n  Mac: {}",
+                    w.name,
+                    w.host,
+                    w.remote_root,
+                    w.mount_root.display()
+                );
+                if !no_probe {
+                    let mut command = Command::new("ssh");
+                    command.args(["-o", "BatchMode=yes"]);
+                    command.args(ssh_args(
+                        &w.host,
+                        remote_command(&w.remote_root, &["true".into()])?,
+                        false,
+                    ));
+                    match rws::transport::bounded_status(
+                        &mut command,
+                        std::time::Duration::from_secs(12),
+                    ) {
+                        Ok(true) => println!("  SSH: reachable; remote directory accessible"),
+                        Ok(false) => {
+                            println!("  SSH: unavailable or remote directory inaccessible");
+                            failed = true;
+                        }
+                        Err(e) => {
+                            println!("  SSH: {e}");
+                            failed = true;
+                        }
+                    }
+                } else {
+                    println!("  SSH: not checked");
+                }
+                println!(
+                    "  Application commands: not redirected. Use rws exec / rws shell for VM execution."
+                );
+            }
+            Ok(if failed { 1 } else { 0 })
+        }
         Action::Workspace {
             action: WorkspaceAction::List,
         } => {
@@ -221,10 +399,41 @@ fn run(cli: Cli) -> Result<i32, String> {
         Action::Workspace { .. } => unreachable!(),
         Action::Exec {
             workspace,
+            cwd,
+            git_context,
             dry_run,
-            command,
+            mut command,
         } => {
-            let (w, remote) = resolve(&config, workspace.as_deref())?;
+            let local = match cwd.as_ref() {
+                Some(p) => p.clone(),
+                None => std::env::current_dir().map_err(|e| e.to_string())?,
+            };
+            let (w, remote) = if cwd.is_some() || git_context {
+                let selected = rws::routing::resolve_directory(&config, &local)?.ok_or(
+                    "directory is not in a registered RWS workspace; refusing local fallback",
+                )?;
+                if !dry_run {
+                    require_verified_mount(&path, &selected.0)?;
+                }
+                selected
+            } else {
+                resolve(&config, workspace.as_deref())?
+            };
+            // Validate the original argv before prepending the environment tool.
+            remote_command(&remote, &command)?;
+            if git_context {
+                let environment = rws::routing::git_environment(&w, &local)?;
+                if !environment.is_empty() {
+                    let mut wrapped = vec!["env".to_string()];
+                    wrapped.extend(
+                        environment
+                            .into_iter()
+                            .map(|(key, value)| format!("{key}={value}")),
+                    );
+                    wrapped.extend(command);
+                    command = wrapped;
+                }
+            }
             let script = remote_command(&remote, &command)?;
             if !dry_run {
                 eprintln!("RWS remote: {}:{}", w.host, remote);
@@ -241,19 +450,43 @@ fn run(cli: Cli) -> Result<i32, String> {
         }
         Action::Mount {
             workspace,
+            verify_existing,
             dry_run,
             fskit,
             raw_names,
         } => {
             let w = config.find(&workspace)?;
+            let fskit = fskit || config.mount.fskit;
             if !cfg!(target_os = "macos") {
                 return Err("mount is currently supported on macOS only".into());
             }
             if fskit && w.mount_root.parent() != Some(std::path::Path::new("/Volumes")) {
                 return Err("FSKit requires a mount point directly under /Volumes".into());
             }
+            let _operation = if dry_run {
+                None
+            } else {
+                Some(rws::lifecycle::lock(&path, w)?)
+            };
             if !dry_run {
-                let version = check_sshfs()?;
+                if let Some(actual) = rws::lifecycle::identity(&w.mount_root)? {
+                    if rws::lifecycle::verified(&path, w, &actual) {
+                        println!(
+                            "Already connected: {} at {}",
+                            w.name,
+                            w.mount_root.display()
+                        );
+                        return Ok(0);
+                    }
+                    if verify_existing {
+                        rws::lifecycle::attest(w, &actual)?;
+                        rws::lifecycle::record(&path, w, actual)?;
+                        println!("Existing volume verified and connected: {}", w.name);
+                        return Ok(0);
+                    }
+                    return Err("a filesystem is already mounted here, but its identity is unverified; leaving it untouched. Use connect NAME --verify-existing to verify it against SSH without disconnecting".into());
+                }
+                let version = check_sshfs(&config)?;
                 if fskit && !raw_names && !version.contains("3.7.5-rws-fskit3") {
                     return Err("FSKit Unicode support requires the RWS SSHFS build: run scripts/build-sshfs-fskit.sh and set RWS_SSHFS to its output. Use --raw-names only for intentional unconverted filename access".into());
                 }
@@ -297,7 +530,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             }
             args.extend(["-o".into(), format!("volname=RWS-{}", w.name)]);
             args.push("-f".into());
-            let program = sshfs_program();
+            let program = sshfs_program(&config);
             if dry_run {
                 return invoke(&program, &args, true, false);
             }
@@ -320,6 +553,12 @@ fn run(cli: Cli) -> Result<i32, String> {
                 std::time::Duration::from_secs(30),
                 || mounted_filesystem(&w.mount_root),
             )?;
+            let actual = rws::lifecycle::identity(&w.mount_root)?
+                .ok_or("mount disappeared before recording its identity")?;
+            rws::lifecycle::attest(w, &actual).map_err(|e| {
+                format!("volume exists but verification failed: {e}; no ownership receipt saved")
+            })?;
+            rws::lifecycle::record(&path, w, actual).map_err(|e| format!("volume is mounted, but its identity could not be saved: {e}; eject through Finder before reconnecting"))?;
             // SSHFS continues independently and exits when the OS unmounts its volume.
             println!("Mounted {} at {}", w.name, w.mount_root.display());
             eprintln!("SSHFS log: {}", log.display());
@@ -330,12 +569,39 @@ fn run(cli: Cli) -> Result<i32, String> {
             if !cfg!(target_os = "macos") {
                 return Err("unmount is currently supported on macOS only".into());
             }
-            invoke(
+            let _operation = if dry_run {
+                None
+            } else {
+                Some(rws::lifecycle::lock(&path, w)?)
+            };
+            if !dry_run {
+                match rws::lifecycle::identity(&w.mount_root)? {
+                    None => {
+                        rws::lifecycle::forget(&path, w)?;
+                        println!("Already disconnected: {}", w.name);
+                        return Ok(0);
+                    },
+                    Some(actual) if rws::lifecycle::verified(&path, w, &actual) => {},
+                    Some(_) => return Err("refusing to unmount a filesystem with an unverified identity; close your work and eject it through Finder".into()),
+                }
+            }
+            let code = invoke(
                 "/sbin/umount",
                 &[w.mount_root.to_string_lossy().into_owned()],
                 dry_run,
                 false,
-            )
+            )?;
+            if !dry_run {
+                if code != 0 {
+                    return Err("disconnect failed; close files and terminals using the volume, then retry (no forced unmount performed)".into());
+                }
+                if rws::lifecycle::identity(&w.mount_root)?.is_some() {
+                    return Err("disconnect returned but the volume is still mounted".into());
+                }
+                rws::lifecycle::forget(&path, w)?;
+                println!("Disconnected: {}. Remote files are preserved.", w.name);
+            }
+            Ok(code)
         }
         Action::Doctor { workspace } => {
             let mut missing = false;
@@ -344,7 +610,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                 println!("{tool}: {}", if found { "available" } else { "missing" });
                 missing |= !found;
             }
-            match check_sshfs() {
+            match check_sshfs(&config) {
                 Ok(_) => println!("sshfs: available and runnable"),
                 Err(error) => {
                     println!("sshfs: unusable — {error}");

@@ -13,6 +13,16 @@ use std::{
 pub struct Config {
     pub version: u32,
     pub workspaces: Vec<Workspace>,
+    #[serde(default)]
+    pub mount: MountOptions,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MountOptions {
+    pub sshfs: Option<String>,
+    #[serde(default)]
+    pub fskit: bool,
 }
 impl Config {
     pub fn load(path: &Path) -> Result<Self, String> {
@@ -22,15 +32,30 @@ impl Config {
                 return Ok(Self {
                     version: 1,
                     workspaces: vec![],
+                    mount: MountOptions::default(),
                 });
             }
             Err(e) => return Err(format!("read config: {e}")),
         };
+        Self::parse(&bytes)
+    }
+    /// Routing must never interpret a missing registry as permission to run locally.
+    pub fn load_existing(path: &Path) -> Result<Self, String> {
+        let bytes = fs::read(path).map_err(|e| {
+            format!(
+                "read required RWS configuration {}: {e}; refusing local fallback",
+                path.display()
+            )
+        })?;
+        Self::parse(&bytes)
+    }
+    fn parse(bytes: &[u8]) -> Result<Self, String> {
         let config: Self =
-            serde_json::from_slice(&bytes).map_err(|e| format!("invalid config: {e}"))?;
+            serde_json::from_slice(bytes).map_err(|e| format!("invalid config: {e}"))?;
         if config.version != 1 {
             return Err("unsupported config version".into());
         }
+        config.mount.validate()?;
         for (i, w) in config.workspaces.iter().enumerate() {
             w.validate()?;
             for other in &config.workspaces[..i] {
@@ -47,6 +72,25 @@ impl Config {
     }
     pub fn add(path: &Path, workspace: Workspace) -> Result<(), String> {
         workspace.validate()?;
+        Self::update(path, |config| {
+            for other in &config.workspaces {
+                check_pair(&workspace, other)?;
+            }
+            config.workspaces.push(workspace);
+            Ok(())
+        })
+    }
+    pub fn set_mount_options(path: &Path, options: MountOptions) -> Result<(), String> {
+        options.validate()?;
+        Self::update(path, |config| {
+            config.mount = options;
+            Ok(())
+        })
+    }
+    fn update(
+        path: &Path,
+        change: impl FnOnce(&mut Self) -> Result<(), String>,
+    ) -> Result<(), String> {
         let parent = path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
@@ -65,10 +109,7 @@ impl Config {
         })?;
         let _guard = Lock(lock_path);
         let mut config = Self::load(path)?;
-        for other in &config.workspaces {
-            check_pair(&workspace, other)?;
-        }
-        config.workspaces.push(workspace);
+        change(&mut config)?;
         let bytes = serde_json::to_vec_pretty(&config).map_err(|e| e.to_string())?;
         let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
         let mut file = options
@@ -79,6 +120,18 @@ impl Config {
             .and_then(|_| file.sync_all())
             .map_err(|e| format!("write config: {e}"))?;
         fs::rename(&temp_guard.0, path).map_err(|e| format!("replace config: {e}"))?;
+        Ok(())
+    }
+}
+impl MountOptions {
+    fn validate(&self) -> Result<(), String> {
+        if self
+            .sshfs
+            .as_ref()
+            .is_some_and(|p| !Path::new(p).is_absolute() || p.contains('\0'))
+        {
+            return Err("saved SSHFS executable must be an absolute path without NUL".into());
+        }
         Ok(())
     }
 }
@@ -93,7 +146,7 @@ fn check_pair(a: &Workspace, b: &Workspace) -> Result<(), String> {
 }
 // Mount points may not exist at registration time. Resolve their existing
 // ancestor so aliases such as /tmp and /private/tmp cannot hide overlaps.
-fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, String> {
     match path.canonicalize() {
         Ok(resolved) => Ok(resolved),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

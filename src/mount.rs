@@ -5,7 +5,7 @@ use std::{
 };
 
 // Observe exit without reaping: keep the group leader PID reserved until cleanup.
-fn exited(child: &Child) -> std::io::Result<bool> {
+pub(crate) fn exited(child: &Child) -> std::io::Result<bool> {
     unsafe {
         let mut info: libc::siginfo_t = std::mem::zeroed();
         if libc::waitid(

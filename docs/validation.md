@@ -2,13 +2,63 @@
 
 Latest result: the [FSKit corrections](sshfs-fskit.md) are implemented and a real RWS file-operation cycle passes using the isolated patched SSHFS build. Earlier failure records below are preserved as diagnostic history; full editor and recovery acceptance remain outstanding.
 
+## Simplified connection follow-up
+
+`connect`/`disconnect`, remembered backend and SSHFS path, separate mount/SSH
+status, and generated Finder shortcuts are implemented. The current automated
+suite passes on the tested Mac: 34 tests, formatting and Clippy with warnings
+denied. This is a local result, not a new Linux CI result.
+
+Two runs on a dedicated temporary workspace verified repeated connect, a Unicode
+file whose SHA-256 matched an independent remote read, Linux execution in the
+mapped nested directory, and preservation of remote exit code 37. A second
+configuration aimed at the same volume but a different remote directory failed
+the random challenge check and acquired no ownership receipt. Challenge cleanup
+was confirmed. A process holding an open file/current directory caused normal
+unmount to fail with Resource busy; after it exited, normal and repeated
+disconnect passed. Remote bytes remained intact after disconnect, then the
+disposable directory and its AppleDouble metadata were explicitly cleaned up.
+
+The user's existing Documents volume was verified and adopted without an
+unmount. Generated Connect and Status scripts passed; the Shell-VM script opened
+a remote PTY where `uname -s` returned Linux and `pwd` the remote workspace root.
+GUI double-click launch was not separately exercised. The Documents mount remains
+active. Original config, shortcuts, binary, logs and exact paths remain private
+in `.rws-local/`.
+
+Delta's own command execution remains local according to its documented model;
+no supported SSH agent backend was found. Its active worktree and Python
+environment were not migrated. See [connection and execution](connection.md).
+This work does not validate editor saves, network-loss recovery or automatic
+Finder sidebar persistence. Mount verification now requires a writable root.
+
 ## Current acceptance snapshot
+
+Global Delta forwarding follow-up: the current suite passes 46 tests locally,
+with formatting and Clippy. Personal rule generation is generic across the
+registered workspaces. Live tests on two disposable projects under the existing
+mount passed Linux Python execution, correct nested CWD, Git status, and translation
+of a Delta-format Mac-local Git remote URL. One project used an accented directory;
+the other simulated Delta's cloned Git metadata. The same wrapper also read the
+active Delta worktree's Git root, status and translated local remote successfully,
+without rewriting its metadata. Both disposable projects were removed afterward.
+
+The private installed binary and Delta personal rule file were verified. The rule
+checks routing before commands, forwards remote workloads with a command-scoped
+Git environment, and allows ordinary local projects. Missing registries, escaped
+paths and unavailable mounts fail instead of authorizing local fallback. Tests
+also cover Linux-created Git metadata and selection of another registered host.
+
+Delta was not running/accessible through the UI tool at verification time. Thus
+rule installation and the relay are validated, but a Delta agent turn obeying
+the installed rule remains unverified. Its internal automatic setup/native Git
+processes are not intercepted. See [global rules and limits](connection.md#install-one-rule-for-every-registered-project).
 
 This table supersedes unresolved statements in the historical investigation sections below. The current required experimental binary is `3.7.5-rws-fskit3`.
 
 | Workflow | Recorded result |
 | --- | --- |
-| Rust build, formatting, Clippy, automated tests | Passed; 21 tests |
+| Rust build, formatting, Clippy, automated tests | Passed locally; 46 tests after global forwarding follow-up |
 | SSH exec, quoted arguments, remote working directory, interactive login shell | Passed on one authorized Linux host |
 | Mount readiness and ordinary unmount | Passed; retained demo mount intentionally left active |
 | Unicode I/O and repeated root/child listing | Passed with fskit3; live regression failed before correction |
@@ -128,3 +178,44 @@ A user report disproved the previous implication that browsing the retained volu
 With `3.7.5-rws-fskit3`, repeated root/child enumeration and Unicode create/read/delete checks passed on both the diagnostic and final Documents mounts. A private SFTP handle per enumeration fixes the cursor reuse; review also identified the requirement to disable `nullpath_ok`. One intermediate diagnostic build crashed before this flag was corrected, leaving blocked OS I/O/unmount processes; its volume is absent from the mount table, but process cleanup was not established. The final corrected mount remains responsive. No global FSKit service restart was performed.
 
 After replacing the stale sidebar shortcut, clicking it displayed the actual root contents. Finder New Folder created a visible directory, independently confirmed over SSH. Finder copy/paste created a visible text file whose contents were confirmed remotely. The user's earlier directories remained intact. Automated Cargo checks still pass (21 tests, format and Clippy). Screenshots and detailed traces are private. Full editor save workflows and automatic sidebar persistence remain unvalidated/unresolved respectively.
+
+## Live Delta command forwarding — 2026-09-20
+
+After user-completed Tailscale SSH reauthentication, Documents connected and
+`status --no-probe` reported a verified RWS mount. A diagnostic sent through
+the running Delta UI loaded the personal RWS rule, but resolved the existing
+conversation's checkout under Delta Application Support as local. It returned
+Darwin. Adding the mounted repository again did not relocate that checkout.
+
+In the new draft opened by Add Project, selecting **Existing Local Checkout**
+before sending the diagnostic made Delta use the mounted repository. Without
+providing an explicit wrapper command in the diagnostic prompt, the agent ran
+`rws context`, received `mode: remote` with `mount_verified: true`, and forwarded
+the workload through `rws exec --git-context`. Observed UI output confirmed
+Linux, the configured remote host, Linux Python, and the matching remote Git
+root. Its first Python probe had a quoting error; the agent corrected it and
+retried through RWS, returning Linux successfully. No local workload fallback
+was observed in this remote diagnostic.
+
+This validates one real Delta agent turn using the mounted primary checkout.
+It does not validate migration of existing isolated checkouts, native Delta
+process forwarding, or development/build completion. The old checkout was
+preserved and the Documents mount left connected.
+
+## Connection and routing release checks — 2026-09-20
+
+The current uncommitted connection/routing implementation passed 46 tests on
+macOS (12 library, 24 CLI, 3 core, 7 routing), `cargo fmt --check`, and
+`cargo clippy --locked --all-targets -- -D warnings` immediately before commit.
+The suite covers saved settings, mount receipt identity, safe challenge cleanup,
+bounded SSH probes, shortcut generation, missing-registry refusal, path escapes,
+and same-workspace Git metadata/URL mapping.
+
+Earlier isolated live acceptance covered repeated connect/disconnect, busy
+unmount refusal, rejection of an incorrect remote root, Unicode I/O with an
+independent SSH hash comparison, nested Linux execution and remote exit status
+37. Generic forwarding was exercised on two disposable projects, including an
+accented directory and Delta-style Git metadata. These checks complement the
+live Delta diagnostic above; they do not establish network-failure recovery or
+persistent Finder sidebar integration. Private configuration and raw evidence
+remain excluded from Git.
