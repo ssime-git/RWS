@@ -12,6 +12,10 @@ For saved connection settings, double-click shortcuts, mount status, and the
 distinction between remote files and Delta's local commands, see
 [connect and execute on the VM](docs/connection.md).
 
+Start a new machine's private configuration from
+[`.rws-local.template/`](.rws-local.template/README.md). Adapt the example paths;
+keep the resulting `.rws-local/` directory out of Git.
+
 ```sh
 cargo build --locked
 ./target/debug/rws --help

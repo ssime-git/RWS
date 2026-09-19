@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "workspaces": [
+    {
+      "name": "documents",
+      "host": "dev@vm.example.invalid",
+      "remote_root": "/home/dev/Documents",
+      "mount_root": "/Volumes/RWS-Documents"
+    }
+  ],
+  "mount": {
+    "sshfs": "/absolute/path/to/patched/sshfs",
+    "fskit": true
+  }
+}
