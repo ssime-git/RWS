@@ -39,7 +39,7 @@ RWS replaces itself with OpenSSH on Unix for command and terminal handling. `she
 
 ## Mount and edit
 
-On the tested macOS 27.0 / macFUSE 5.4.0 stack, use the [experimental SSHFS build](sshfs-fskit.md) to enable rename support. RWS now returns when the mounted filesystem is detected while SSHFS continues in the background. Full editor and recovery acceptance remains pending.
+On the tested macOS 27.0 / macFUSE 5.4.0 stack, use the [experimental SSHFS build](sshfs-fskit.md) for rename, Unicode filenames, and repeated directory listings. RWS now returns when the mounted filesystem is detected while SSHFS continues in the background. Full editor and recovery acceptance remains pending.
 
 ```sh
 ./target/debug/rws mount demo --fskit --dry-run
@@ -55,6 +55,8 @@ rws unmount demo
 Install the CLI on PATH with `cargo install --path . --locked` if desired. A dry run prints the exact program and argument array without invoking SSH or creating a mount directory. Mounting refuses a nonempty directory or a symlink mount point. `--fskit` selects the user-space backend and requires a direct child of `/Volumes`; macFUSE creates the mount directory. Enable its FSKit module in System Settings > General > Login Items & Extensions. Without this flag, SSHFS uses its default backend. RWS rejects an already-mounted path and verifies a filesystem device boundary while foreground-mode SSHFS remains alive. Startup has a 30-second polling deadline; errors identify a private log beside the configuration. SSHFS runs in its own process group and exits on OS unmount. Authentication must already work noninteractively. This prototype has no RWS daemon or automatic reconnect policy.
 
 `doctor` reports SSH/SFTP executable presence, verifies that `sshfs --version` succeeds, and optionally runs remote `pwd` with noninteractive SSH authentication. An SSHFS executable whose macFUSE library is missing is reported as unusable; mounting checks this before creating a mount directory. A missing mount dependency yields a nonzero result even if SSH works. It does not prove that macFUSE is loaded or a mount will succeed.
+
+For the left sidebar, follow [Finder configuration and acceptance](finder-macos.md). The guide covers display categories, stale shortcuts after remount, and independent checks of Finder-created files.
 
 ## Limits
 

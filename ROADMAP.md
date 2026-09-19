@@ -38,3 +38,15 @@ This roadmap records direction, not delivery dates or claims of available functi
 - Define mobile file caching, authentication, and integration behavior separately.
 
 Stages 4 and 5 remain future work. Their requirements inform core boundaries without delaying the first prototype.
+
+## Next acceptance steps after the first Finder corrections
+
+In priority order, using disposable data and recording results in `docs/validation.md`:
+
+1. **Editor save workflow:** open a file through the mount in a local editor, change/save/reopen it, and compare remote bytes. Include Unicode names, replacement saves, and error reporting. Finder folder creation and copy/paste are verified; this editor workflow is not.
+2. **Mount and Finder lifecycle:** repeat mount/browse/write/unmount cycles, verify process cleanup, and investigate stable sidebar identity. Add observed failures to the live acceptance checks. Resolve/document the outstanding diagnostic OS processes before broader fault testing.
+3. **Controlled failure behavior:** on a dedicated remote test directory, test interrupted connections/writes and recovery. Measure delays and surface errors; do not perform these tests on valuable Documents data.
+4. **Remote development workflow:** validate a coding-agent CLI already installed/authenticated on the remote host, working-directory mapping, PTY resize and Ctrl+C. Then test a second host and a fresh Mac using the repository skill.
+5. **Contributor readiness:** persistent toolchain/setup instructions, reviewed anonymized README screenshots, license selection and release prerequisites. Existing macOS/Linux CI covers the Rust suite, not live macFUSE/Finder acceptance.
+
+Desktop and iOS remain deferred until this core workflow and its failure behavior are dependable. These steps do not authorize future package installation, account authentication, fault injection, or application-framework choices by themselves.

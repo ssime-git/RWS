@@ -78,7 +78,17 @@ For the current FSKit route, use the `3.7.5-rws-fskit3` build: conversion mode r
 
 Run `python3 scripts/test-mount-listing.py /Volumes/RWS-setup-test` on the authorized mounted root; repeated root listings after create/delete must remain accurate. This test creates a unique disposable directory and retains it on failure. Earlier builds returned an empty root after the first enumeration despite successful remote mkdir.
 
-Verify Finder separately: the volume is labeled `RWS-WORKSPACE`. If absent from Locations, inspect Finder > Go > Computer. File > Add to Sidebar on the selected volume worked on the tested Mac, but its entry disappeared after remount. Record persistence separately. If a stale sidebar entry says its original item cannot be found, remove that shortcut and add the current volume again. Click it, create a folder, and copy a test file in Finder; independently confirm both on the server. Obtain user approval before changing Finder disk-display preferences; do not classify the remote mount as local to force appearance.
+### Finder settings and the left sidebar
+
+Read `docs/finder-macos.md` for the complete procedure and symptom table. In Finder > Settings > Sidebar, inspect Connected servers, External disks and Hard disks under Locations; record prior states, including mixed checkboxes. With existing user authorization or approval for these preference changes, enable the requested categories. This can expose other volumes in the sidebar. These are display settings, not a reason to grant Full Disk Access or change FSKit activation.
+
+On the tested Mac, enabling the disk categories was insufficient. Go > Computer (⇧⌘C), select `RWS-WORKSPACE`, then File > Add to Sidebar placed the current volume under Locations with an eject button. If the sidebar is hidden, show it from View; expand Locations if collapsed. RWS does not configure Finder automatically and must not present the remote mount as local just to force appearance.
+
+After remount, the entry may disappear or remain stale. If clicking it reports that the original item cannot be found, first open the actual `/Volumes/RWS-...` path with ⇧⌘G. If that works, remove only the stale sidebar shortcut through its context menu and add the current volume from Computer again. Removing a shortcut is different from ejecting a volume. Automatic sidebar persistence remains unresolved.
+
+Validate by actually clicking the sidebar entry, repeatedly leaving/reopening the root, creating a unique folder with ⇧⌘N, and copying a test file through Finder. Independently verify the directory and file bytes remotely. Finder has no generic New File command; use an editor Save dialog or copy/paste. Copy/paste success does not validate editor save patterns. Capture the resulting root view, not only the icon. If changes made outside Finder are missing, reopen the directory and record refresh behavior rather than claiming live notifications.
+
+If a diagnostic crashes and OS I/O or unmount processes remain blocked, record them separately from the current mount's health. Stop accumulating probes on that volume. Do not automatically restart all FSKit services or reboot around the user's active work. The absence of a mount entry does not establish process cleanup.
 
 Close test files, leave the mounted directory, and run `rws unmount setup-test`. Verify the volume is absent and the remote data still exists. Clean up only the exact disposable files/directory created during this run. For a continuing demo, explicitly record any retained mount or test directory.
 

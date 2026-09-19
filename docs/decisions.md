@@ -42,7 +42,7 @@ Share logic where there is a concrete need. Avoid speculative mobile code, empty
 - Desktop UI framework and Windows/Linux filesystem integration.
 - Persistent session reattachment across devices.
 - Advanced transfers, remote watchers, custom filesystem, offline behavior, installer, updater, and signing.
-- Public repository creation, publication, and license selection.
+- License selection. The public repository has since been created and published with user authorization; licensing remains open.
 
 ## Repository organization
 

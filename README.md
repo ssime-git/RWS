@@ -23,6 +23,7 @@ The remote machine remains the source of truth. The prototype will use existing 
 
 - [Decisions and prototype scope](docs/decisions.md)
 - [Roadmap](ROADMAP.md)
+- [macOS Finder configuration and troubleshooting](docs/finder-macos.md)
 - [Experimental FSKit-compatible SSHFS](docs/sshfs-fskit.md)
 - [Validation results and remaining checks](docs/validation.md)
 - [Agent skill: set up RWS on a new Mac](.agents/skills/rws-macos-setup/SKILL.md)

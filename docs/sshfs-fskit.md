@@ -42,9 +42,7 @@ SSHFS directory/attribute caching and FUSE attribute/entry/negative timeouts are
 
 ## Finder sidebar
 
-Volumes are named `RWS-WORKSPACE`. A successful mount does not guarantee an entry under Finder's Locations. On the tested Mac, enabling Hard disks and External disks (with user approval) was insufficient; Connected servers was already enabled. Finder's Computer view showed a browsable remote volume throughout.
-
-For the current mount, open Finder > Go > Computer, select the RWS volume, then File > Add to Sidebar. This produced a Locations entry with an eject button. After an unmount/remount the entry disappeared in a new Finder window; repeat this action if necessary. Automatic sidebar persistence remains unresolved. RWS does not change Finder preferences or represent the remote filesystem as a local disk.
+Follow the [macOS Finder setup and acceptance guide](finder-macos.md) for per-user display categories, adding the mounted volume under Locations, replacing stale shortcuts after remount, and verifying actual folder/file creation. Sidebar persistence is not automatic or validated across remounts.
 
 ## Repeated directory enumeration
 

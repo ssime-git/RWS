@@ -2,6 +2,25 @@
 
 Latest result: the [FSKit corrections](sshfs-fskit.md) are implemented and a real RWS file-operation cycle passes using the isolated patched SSHFS build. Earlier failure records below are preserved as diagnostic history; full editor and recovery acceptance remain outstanding.
 
+## Current acceptance snapshot
+
+This table supersedes unresolved statements in the historical investigation sections below. The current required experimental binary is `3.7.5-rws-fskit3`.
+
+| Workflow | Recorded result |
+| --- | --- |
+| Rust build, formatting, Clippy, automated tests | Passed; 21 tests |
+| SSH exec, quoted arguments, remote working directory, interactive login shell | Passed on one authorized Linux host |
+| Mount readiness and ordinary unmount | Passed; retained demo mount intentionally left active |
+| Unicode I/O and repeated root/child listing | Passed with fskit3; live regression failed before correction |
+| Finder sidebar click, New Folder, file copy/paste | Passed after replacing the stale shortcut; remote existence/content confirmed |
+| Local editor modification/save/reopen | Pending |
+| Automatic sidebar entry persistence after remount | Unresolved; manual replacement procedure documented |
+| Network-loss/crash recovery and remote-change notifications | Not validated; intermediate diagnostic left two OS processes blocked |
+| Second host and fresh physical Mac | Pending |
+| Screenshots | Private originals retained; no sanitized README images published |
+
+See [Finder setup](finder-macos.md) for operational steps and [the roadmap](../ROADMAP.md#next-acceptance-steps-after-the-first-finder-corrections) for the next acceptance work. Setup permissions used during the initial FSKit repair were revoked; later Finder work needed no new privacy grant.
+
 ## Verified locally
 
 - Rust 1.98.1 build and test execution on Apple Silicon macOS using installed Command Line Tools.
