@@ -11,7 +11,7 @@ Read the checkout's `docs/prototype.md` and `docs/validation.md` before starting
 
 ## Inputs and evidence
 
-Obtain the checkout location, an authorized SSH alias/destination, and permission to create a disposable remote test directory. Ask missing questions one at a time while completing independent local checks. If cloning is necessary, use the repository URL the user supplied or a verified remote; this project has not yet been publicly published.
+Obtain the checkout location, an authorized SSH alias/destination, and permission to create a disposable remote test directory. Ask missing questions one at a time while completing independent local checks. If cloning is necessary, use https://github.com/ssime-git/RWS or a verified fork supplied by the user.
 
 Create `.rws-local/diagnostics/` for private setup notes and screenshot originals. Record OS/build, architecture, dependency versions, selected workspace, commands, outcomes, and any temporary grants that need revocation. Capture useful milestones: dependency installer success, FSKit module activation, mounted volume in Finder, a verified edited file, and final permission cleanup. Use permitted screenshot tooling; if unavailable, record that limitation. Original screenshots may contain account names and other apps: keep them ignored by Git. Only reviewed, anonymized images belong in public README assets. Never capture password entry.
 

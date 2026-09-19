@@ -7,7 +7,7 @@
 - `cargo fmt --check` and `cargo clippy --locked --all-targets -- -D warnings` passing.
 - Independent code review identified mount-root alias overlap; a failing regression test reproduced it and the fix now resolves existing ancestors before comparing roots.
 - Missing SSHFS produces a clear error without creating the mount directory.
-- Local Git repository initialized on `prototype/cli`; nothing published to GitHub.
+- Repository published at https://github.com/ssime-git/RWS with `prototype/cli` as the initial default branch.
 
 ## Verified on an authorized Linux SSH host
 
@@ -26,7 +26,7 @@ These checks validate remote execution, not editing through the filesystem mount
 - PTY resize and Ctrl+C under a long-running job, interrupted remote writes, and network-loss recovery.
 - Coding-agent launch: no agent was installed or authenticated as part of these checks.
 - Second host, transfer behavior, and performance targets from v0.1.
-- GitHub Actions execution and Linux CI results: the workflow is prepared but has not run remotely.
+- A complete setup on a second physical Mac; CI does not exercise an actual macFUSE volume.
 
 ## Local tooling note
 
@@ -67,3 +67,7 @@ Raw screenshots and SSHFS traces are retained in ignored `.rws-local/diagnostics
 ## Reproducible setup skill
 
 The repository includes `.agents/skills/rws-macos-setup/SKILL.md`, linked from root agent guidance and the README. Structure, references, and privacy-sensitive examples were checked; independent agent scenarios reviewed the procedure. A complete setup on a second, fresh Mac has not been executed.
+
+## First GitHub CI run
+
+[Run 35415731910](https://github.com/ssime-git/RWS/actions/runs/35415731910) passed on both `macos-latest` and `ubuntu-latest` for commit `0885718`: formatting, locked tests, and Clippy with warnings denied. This validates the automated suite, not FSKit mounting or Finder editing.
