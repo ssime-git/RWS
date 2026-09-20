@@ -74,6 +74,90 @@ fn registration_is_persistent_and_rejects_duplicates_and_overlapping_roots() {
         .success()
     );
 }
+// A stalled SSHFS volume blocks any path resolution under its mount root, so
+// reading the configuration must never resolve mount roots: every command —
+// including the app's startup validation via `workspace list` — would hang
+// with it. A symlink loop makes resolution fail deterministically instead of
+// hanging, which is enough to prove no resolution happens while loading.
+#[test]
+fn loading_configuration_never_resolves_mount_roots() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, &temp.path().join("stalled/mount"));
+    let out = run(
+        &config,
+        &[
+            "workspace",
+            "add",
+            "healthy",
+            "--ssh",
+            "server",
+            "--remote",
+            "/srv",
+            "--mount",
+            temp.path().join("healthy").to_str().unwrap(),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::os::unix::fs::symlink("stalled", temp.path().join("stalled")).unwrap();
+    let out = run(&config, &["workspace", "list"]);
+    assert!(
+        out.status.success(),
+        "an unresolvable mount root must not invalidate the configuration: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("demo") && text.contains("healthy"), "{text}");
+    // The unavailable volume surfaces as per-workspace state, never as a
+    // global configuration failure.
+    let out = run(&config, &["status", "--no-probe"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("demo:") && text.contains("healthy:"),
+        "{text}"
+    );
+}
+#[test]
+fn hand_edited_duplicate_names_or_nested_roots_are_rejected_without_resolution() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, &temp.path().join("loop/mount"));
+    std::os::unix::fs::symlink("loop", temp.path().join("loop")).unwrap();
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+    let mut second = value["workspaces"][0].clone();
+    second["mount_root"] = temp
+        .path()
+        .join("loop/mount/nested")
+        .to_str()
+        .unwrap()
+        .into();
+    for (name, expected) in [("demo", "duplicate name"), ("other", "nested root")] {
+        second["name"] = name.into();
+        value["workspaces"].as_array_mut().unwrap().truncate(1);
+        value["workspaces"]
+            .as_array_mut()
+            .unwrap()
+            .push(second.clone());
+        std::fs::write(&config, serde_json::to_vec(&value).unwrap()).unwrap();
+        let out = run(&config, &["workspace", "list"]);
+        assert!(!out.status.success(), "{expected} must be rejected");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("overlap"),
+            "{expected}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
 #[test]
 fn dry_run_preserves_argv_and_does_not_create_mount() {
     let temp = tempfile::tempdir().unwrap();
