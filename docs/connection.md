@@ -118,10 +118,19 @@ dependencies can use a separate environment such as `.venv-rws`.
 
 These are instructions for agent-issued commands, not a hook into Delta's
 process launcher. Project/folder rules or user messages can override personal
-rules. Delta's automatic preparation, direnv loading, native Git operations and
-interactive terminals are not redirected by this rule. Verify the rule's first
-use in Delta with remote `uname -s`, `hostname`, and `pwd`; installing a file alone
-does not prove that a Delta turn has followed it.
+rules. Delta's automatic preparation, direnv loading and native Git operations
+are not redirected by this rule. Verify the rule's first use in Delta with
+remote `uname -s`, `hostname`, and `pwd`; installing a file alone does not
+prove that a Delta turn has followed it.
+
+Delta's **interactive integrated terminals** are a separate path: they start
+the user's login zsh, so the installed
+[terminal integration](prototype.md#automatic-terminal-switch-zsh) prompts
+there like in any other terminal when the working directory is a verified
+mount. Measured on 2026-09-20 with a login-zsh PTY in the mounted workspace:
+the `[Y/n]` prompt appeared, Enter opened the remote shell on the mapped
+directory (`uname -s` → Linux), `n` kept the terminal local. Confirm inside
+Delta's own terminal pane once per setup; a simulation is not that pane.
 
 ### Choose a checkout inside the mount
 
@@ -152,6 +161,14 @@ agent backend was found in the documented settings checked on 2026-09-19:
 [collaboration execution location](https://delta.dev/docs/collaboration/collaborate-thread).
 
 A remote filesystem mount therefore does not relocate Delta's command tool.
+Measured on 2026-09-20: `/bin/sh -c` in the mounted workspace runs on the Mac
+with no prompt and no redirection — expected, since a noninteractive sh reads
+no startup files and the zsh integration deliberately never acts without a
+controlling TTY. **Feasibility decision:** without a Delta-side execution
+backend, transparent redirection of this tool path is not implementable from
+outside the app; the installed instruction rules remain the supported
+mechanism for agent-issued commands, and `RWS_AUTO_MODE=remote|local` is the
+environment contract available to any launcher that wants to force a mode.
 From a local terminal inside a mounted subdirectory, use:
 
 ```sh
