@@ -83,9 +83,9 @@ fallback is documented. The CLI alone does not manage Finder favorites.
 
 | Entry point | Route | Current working directory |
 | --- | --- | --- |
-| App **Lancer sur la VM** | Private launcher → Terminal → `rws agent` → SSH | Selected remote workspace root |
+| App **Lancer sur la VM** / **Lancer en local** | Private launcher → Terminal → `rws agent` over SSH, or local run in the mount; both export `RWS_AUTO_MODE` | Workspace root, or the optional relative subdirectory from the launcher field |
 | `rws exec --workspace demo -- …` | Literal argv → quoted remote command → SSH | Remote workspace root |
-| `rws exec --cwd … --git-context -- …` | Verified path and Git mapping → SSH | Corresponding remote directory |
+| `rws exec --cwd … --git-context -- …` / `rws agent --cwd …` | Verified path and Git mapping → SSH | Corresponding remote directory (exact subdirectory) |
 | `rws shell` | SSH PTY → remote login shell | Mapped current directory, or explicit workspace root |
 | Current Delta rules | Agent instructed to invoke RWS explicitly | Mapped checkout; native Delta processes remain local |
 | Interactive zsh with `eval "$(rws hook zsh)"` | `cd` into verified mount → `rws context` check → `[Y/n]` prompt (answer kept per shell) → `rws shell` over SSH | Mapped remote directory |
@@ -177,9 +177,14 @@ documented decision instead of a silent scope reduction.
 
 Remote failure on any covered path stops with a visible error; no local
 executable of the same name runs instead
-([#5](https://github.com/ssime-git/RWS/issues/5)). Exact-path/worktree
-acceptance across multiple hosts remains tracked in
-[#4](https://github.com/ssime-git/RWS/issues/4).
+([#5](https://github.com/ssime-git/RWS/issues/5), closed with dated
+evidence). Exact-path context is accepted across two hosts, subdirectories
+with accents and spaces, escaping symlinks and Mac-absolute worktree
+metadata ([#4](https://github.com/ssime-git/RWS/issues/4), closed) — the
+resolution lives in [`src/routing.rs`](../src/routing.rs) and is shared by
+`exec --cwd`, `agent --cwd`, the app launcher's subdirectory field and the
+terminal hook. All five execution P0s (#1–#5) are closed; evidence in the
+[validation journal](validation.md).
 
 ## 7. Evidence and limitations
 
