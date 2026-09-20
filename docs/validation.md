@@ -321,3 +321,20 @@ publication rollback, refusal cases, metadata and production settings. The app
 shows revision and UTC build timestamp. Historical executable backups from this
 session were converted to verified ZIPs. Production signing/notarization remains
 unavailable without an Apple Developer account.
+
+## Finder click acceptance completed — 2026-09-20, 13:13 local
+
+On resumption the workspace had been disconnected; clicking its retained favorite
+produced the expected missing-original error. The authorized live test then
+connected, pinned, disconnected, removed the favorite, reconnected and pinned
+the Documents workspace again. Native Finder automation clicked the refreshed
+favorite and displayed the remote root contents at `/Volumes/RWS-Documents/`.
+It navigated to local Documents and clicked the remote favorite again; the same
+remote contents appeared without an alert. This completes the post-remount Finder
+click check previously blocked by the locked Mac. The mount was left connected.
+A disconnected favorite does not auto-connect: use RWS to reconnect first.
+
+The dedicated RWS window still cannot be inspected by the native automation tool
+(pipe closes). This is not a claim that the complete graphical app button flow
+was automated. CLI lifecycle, production sidebar helper and actual Finder clicks
+were verified together.

@@ -21,8 +21,10 @@ identifies RWS entries even after their volume disappears. Earlier unresolved
 favorites are migrated only when their exact display name matches the current RWS
 volume name. Other favorites are not removed.
 
-The live CLI/helper disconnect/remount cycle passes; Finder click acceptance after
-that cycle still requires an unlocked user session. See the current validation log.
+The live CLI/helper disconnect/remount cycle and subsequent Finder clicks passed
+on the tested Mac, including navigating away and reopening the favorite. A favorite
+does not initiate a connection when the workspace is disconnected: reconnect in
+RWS first. See the current validation log.
 
 ## Manual fallback: show the mounted volume in the left sidebar
 
