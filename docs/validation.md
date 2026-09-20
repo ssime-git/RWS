@@ -357,3 +357,24 @@ The dedicated RWS window still cannot be inspected by the native automation tool
 (pipe closes). This is not a claim that the complete graphical app button flow
 was automated. CLI lifecycle, production sidebar helper and actual Finder clicks
 were verified together.
+
+## Terminal auto-switch acceptance — 2026-09-20, 15:00 local
+
+The zsh integration installed automatically by the app (bundled `rws`,
+`.rws-local` configuration baked as absolute paths) was exercised on the real
+`razer-documents` workspace through a pseudo-TTY harness. Entering
+`/Volumes/RWS-Documents/test-delta` prompted `RWS: switch to razer@razer-1
+(razer-documents)? [Y/n]`; Enter opened the remote login shell directly in
+`/home/razer/Documents/test-delta` (exact subdirectory mapping). Inside that
+session: `pwd`, a pipe (`pwd | tr`), a variable with `&&` chaining, `git
+--version` and `python3 -V` all executed on the VM; `exit` returned to the
+local zsh still inside the mount, with no re-switch. Answering `n` kept the
+shell local with the answer remembered; a shell without a controlling TTY
+neither prompted nor switched. `RWS_AUTO_MODE=remote|local` forced both modes
+in tests. 70 Rust tests (including PTY prompt tests through `script(1)`) and
+the Swift suite passed.
+
+Not covered by this entry: interactive Ctrl+C and terminal-resize behavior in
+a human session (informally exercised, not recorded), other shells than zsh,
+IDE-internal and noninteractive processes (issues #1/#2), and terminals opened
+before the integration was installed (one `source ~/.zshrc` required).
