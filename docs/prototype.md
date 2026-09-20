@@ -86,7 +86,11 @@ saved backend settings and Finder-launchable shortcuts. `mount`/`unmount` remain
 aliases. `status` probes a verified mount with a bounded directory read and
 reports `connected (unresponsive mount: …)` when I/O fails or hangs — typically
 after a network loss; `connect NAME --repair` then force-ejects that dead
-volume and mounts again, and is refused while the mount answers normally. Mount identity verification now uses a disposable remote proof file and
+volume, terminates the workspace's stale SSHFS server process if one
+outlived the ejection, verifies the mount point answers, and mounts again.
+It is refused while the mount answers normally, and stops with a
+remediation message (`sudo pkill -9 fskitd`, reboot as fallback) instead of
+hanging when the FSKit service itself is wedged. Mount identity verification now uses a disposable remote proof file and
 therefore requires a writable workspace root. Existing volumes can be verified
 with `connect NAME --verify-existing` without disconnecting them.
 

@@ -102,6 +102,101 @@ pub fn probe_health(root: &Path, timeout: std::time::Duration) -> Result<(), Str
     }
 }
 
+/// Whether a bare path lookup on the mount point answers at all within the
+/// timeout. After an ejection, a healthy system answers instantly (directory
+/// present, or a clean NotFound); no answer means the FSKit service itself is
+/// wedged and starting a new mount would hang — the caller must stop with a
+/// remediation message instead.
+pub fn mountpoint_answers(root: &Path, timeout: std::time::Duration) -> Result<(), String> {
+    let root = root.to_path_buf();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let answer = match fs::symlink_metadata(&root) {
+            Ok(_) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.to_string()),
+        };
+        let _ = sender.send(answer);
+    });
+    receiver
+        .recv_timeout(timeout)
+        .map_err(|_| {
+            format!(
+                "mount point did not answer within {} seconds",
+                timeout.as_secs().max(1)
+            )
+        })
+        .and_then(std::convert::identity)
+}
+
+/// Find SSHFS server processes started for exactly this workspace: the
+/// command line must begin with the configured executable followed by this
+/// source and mount point, as `connect` spawns them. Nothing looser matches.
+fn stale_server_pids(program: &Path, source: &str, mount_root: &Path) -> Result<Vec<i32>, String> {
+    let program = program.to_string_lossy();
+    let mount_root = mount_root.to_string_lossy();
+    let output = std::process::Command::new("/bin/ps")
+        .args(["-axo", "pid=,command="])
+        .output()
+        .map_err(|e| format!("list processes: {e}"))?;
+    if !output.status.success() {
+        return Err("list processes: ps failed".into());
+    }
+    let mut pids = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((pid, command)) = line.trim_start().split_once(' ') else {
+            continue;
+        };
+        // ps cannot show embedded spaces unambiguously; this whitespace
+        // tokenization intentionally matches only the executable, source
+        // and mount point as adjacent tokens (an interpreter such as
+        // /bin/sh may precede a script in tests). Paths with spaces simply
+        // never match — the repair then reports the survivor instead of
+        // killing a wrong process.
+        let words: Vec<&str> = command.split_whitespace().collect();
+        let matches = |offset: usize| {
+            words.get(offset) == Some(&program.as_ref())
+                && words.get(offset + 1) == Some(&source)
+                && words.get(offset + 2) == Some(&mount_root.as_ref())
+        };
+        if (matches(0) || matches(1))
+            && let Ok(pid) = pid.parse::<i32>()
+        {
+            pids.push(pid);
+        }
+    }
+    Ok(pids)
+}
+
+/// Kill this workspace's stale SSHFS servers and wait, within the timeout,
+/// until they are gone. Returns how many were terminated. A server that
+/// survives the timeout (uninterruptible kernel wait) is an error: the
+/// caller must not start a second server on the same mount point.
+pub fn terminate_stale_servers(
+    program: &Path,
+    source: &str,
+    mount_root: &Path,
+    timeout: std::time::Duration,
+) -> Result<usize, String> {
+    let pids = stale_server_pids(program, source, mount_root)?;
+    for &pid in &pids {
+        // Not our child: kill directly; permission errors surface below as
+        // the process surviving the deadline.
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+    let deadline = std::time::Instant::now() + timeout;
+    while !stale_server_pids(program, source, mount_root)?.is_empty() {
+        if std::time::Instant::now() >= deadline {
+            return Err(
+                "a stale SSHFS server refuses to die (likely stuck in the kernel); run: sudo pkill -9 fskitd, or reboot"
+                    .into(),
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Ok(pids.len())
+}
+
 #[derive(Serialize, Deserialize)]
 struct Receipt {
     host: String,
@@ -285,6 +380,66 @@ mod tests {
     fn nix_is_root() -> bool {
         unsafe { libc::geteuid() == 0 }
     }
+    #[test]
+    fn stale_servers_are_matched_exactly_and_terminated() {
+        let temp = tempfile::tempdir().unwrap();
+        let program = temp.path().join("sshfs");
+        // No exec: the shell must keep the script's argv visible in ps.
+        fs::write(&program, "#!/bin/sh\nwhile :; do sleep 1; done\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+        let mount = temp.path().join("mnt");
+        let spawn = |source: &str, root: &Path| {
+            std::process::Command::new(&program)
+                .arg(source)
+                .arg(root)
+                .args(["-o", "options"])
+                .spawn()
+                .unwrap()
+        };
+        let mut target = spawn("dev@host:/srv/data", &mount);
+        let mut other_mount = spawn("dev@host:/srv/data", &temp.path().join("other"));
+        let mut other_source = spawn("dev@host:/srv/other", &mount);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let ended = terminate_stale_servers(
+            &program,
+            "dev@host:/srv/data",
+            &mount,
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(ended, 1);
+        // The exact match is gone; near misses keep running.
+        assert!(target.try_wait().unwrap().is_some());
+        assert!(other_mount.try_wait().unwrap().is_none());
+        assert!(other_source.try_wait().unwrap().is_none());
+        let _ = other_mount.kill();
+        let _ = other_source.kill();
+        let _ = other_mount.wait();
+        let _ = other_source.wait();
+        let _ = target.wait();
+        // Nothing left to end on a second pass.
+        assert_eq!(
+            terminate_stale_servers(
+                &program,
+                "dev@host:/srv/data",
+                &mount,
+                std::time::Duration::from_secs(5),
+            )
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn mountpoint_answers_for_present_and_absent_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let timeout = std::time::Duration::from_secs(2);
+        assert!(mountpoint_answers(temp.path(), timeout).is_ok());
+        // A clean NotFound is an answer: the path can be mounted over.
+        assert!(mountpoint_answers(&temp.path().join("absent"), timeout).is_ok());
+    }
+
     #[test]
     fn failed_challenge_write_removes_only_its_exclusive_directory() {
         let temp = tempfile::tempdir().unwrap();

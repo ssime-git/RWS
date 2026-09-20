@@ -636,6 +636,26 @@ fn run(cli: Cli) -> Result<i32, String> {
                                     );
                                 }
                                 rws::lifecycle::forget(&path, w)?;
+                                // The dead volume's SSHFS server can outlive
+                                // the ejection and wedge the next mount.
+                                let ended = rws::lifecycle::terminate_stale_servers(
+                                    std::path::Path::new(&sshfs_program(&config)),
+                                    &format!("{}:{}", w.host, w.remote_root),
+                                    &w.mount_root,
+                                    std::time::Duration::from_secs(10),
+                                )?;
+                                if ended > 0 {
+                                    eprintln!("Terminated {ended} stale SSHFS server process(es).");
+                                }
+                                rws::lifecycle::mountpoint_answers(
+                                    &w.mount_root,
+                                    std::time::Duration::from_secs(4),
+                                )
+                                .map_err(|reason| {
+                                    format!(
+                                        "{reason}; the FSKit service appears wedged, so mounting again would hang. Run: sudo pkill -9 fskitd (launchd restarts it), then retry; reboot as the fallback"
+                                    )
+                                })?;
                                 // Fall through to the normal mount sequence below.
                             }
                         }
