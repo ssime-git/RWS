@@ -101,6 +101,10 @@ struct CLICommand: Equatable {
         Self(arguments: prefix(config) + ["connect", workspace])
     }
 
+    static func connectRepair(config: URL, workspace: String) -> Self {
+        Self(arguments: prefix(config) + ["connect", workspace, "--repair"])
+    }
+
     static func disconnect(config: URL, workspace: String) -> Self {
         Self(arguments: prefix(config) + ["disconnect", workspace])
     }

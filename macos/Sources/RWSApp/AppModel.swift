@@ -230,6 +230,18 @@ final class AppModel: ObservableObject {
         await refreshStatus()
     }
 
+    /// Eject an unresponsive (zombie) mount and mount it again. The CLI
+    /// refuses the forced ejection while the mount answers normally, so this
+    /// cannot disturb a healthy volume.
+    func repairSelected() async {
+        guard configurationReady, prerequisitesReady, let selectedWorkspace else { return }
+        let succeeded = await perform(.connectRepair(config: configurationURL, workspace: selectedWorkspace), refreshAfter: false)
+        if succeeded {
+            output = "Montage réparé pour \(selectedWorkspace) : volume mort éjecté puis remonté."
+        }
+        await refreshStatus()
+    }
+
     func disconnectSelected() async {
         guard let selectedWorkspace,
               let workspace = configuration.workspaces.first(where: { $0.name == selectedWorkspace }) else { return }

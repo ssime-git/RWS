@@ -104,7 +104,10 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(model.selectedWorkspace == nil || !model.prerequisitesReady || !model.configurationReady)
             Button("Déconnecter") { Task { await model.disconnectSelected() } }
-                .disabled(model.selectedWorkspace == nil)
+                .disabled(model.selectedWorkspace == nil || !model.configurationReady)
+            Button("Réparer") { Task { await model.repairSelected() } }
+                .disabled(model.selectedWorkspace == nil || !model.prerequisitesReady || !model.configurationReady)
+                .help("Éjecte un montage qui ne répond plus (après une coupure réseau) et le remonte. Refusé si le montage est sain.")
             Button("Actualiser") { Task { await model.recheckStartup() } }
             Spacer()
             if model.updates.isEnabled {

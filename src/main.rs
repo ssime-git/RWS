@@ -100,6 +100,10 @@ enum Action {
         /// Verify and adopt an existing volume using a disposable remote file.
         #[arg(long)]
         verify_existing: bool,
+        /// Eject a verified mount whose I/O fails (zombie after link loss),
+        /// then mount again. Refused while the mount answers normally.
+        #[arg(long)]
+        repair: bool,
         #[arg(long)]
         dry_run: bool,
         /// Use the macFUSE FSKit backend; requires a direct child of /Volumes.
@@ -384,7 +388,16 @@ fn run(cli: Cli) -> Result<i32, String> {
                 let state = match rws::lifecycle::identity(&w.mount_root) {
                     Ok(None) => "disconnected".to_string(),
                     Ok(Some(ref actual)) if rws::lifecycle::verified(&path, w, actual) => {
-                        "connected (verified RWS mount)".into()
+                        match rws::lifecycle::probe_health(
+                            &w.mount_root,
+                            std::time::Duration::from_secs(4),
+                        ) {
+                            Ok(()) => "connected (verified RWS mount)".into(),
+                            Err(reason) => format!(
+                                "connected (unresponsive mount: {reason}); repair with: rws connect {} --repair",
+                                w.name
+                            ),
+                        }
                     }
                     Ok(Some(_)) => {
                         "mounted (identity unverified; not managed by this configuration)".into()
@@ -541,6 +554,7 @@ fn run(cli: Cli) -> Result<i32, String> {
         Action::Mount {
             workspace,
             verify_existing,
+            repair,
             dry_run,
             fskit,
             raw_names,
@@ -561,20 +575,62 @@ fn run(cli: Cli) -> Result<i32, String> {
             if !dry_run {
                 if let Some(actual) = rws::lifecycle::identity(&w.mount_root)? {
                     if rws::lifecycle::verified(&path, w, &actual) {
-                        println!(
-                            "Already connected: {} at {}",
-                            w.name,
-                            w.mount_root.display()
+                        let health = rws::lifecycle::probe_health(
+                            &w.mount_root,
+                            std::time::Duration::from_secs(4),
                         );
-                        return Ok(0);
-                    }
-                    if verify_existing {
+                        match (health, repair) {
+                            (Ok(()), false) => {
+                                println!(
+                                    "Already connected: {} at {}",
+                                    w.name,
+                                    w.mount_root.display()
+                                );
+                                return Ok(0);
+                            }
+                            (Ok(()), true) => {
+                                return Err(
+                                    "mount answers normally; nothing to repair. Use disconnect to unmount deliberately".into(),
+                                );
+                            }
+                            (Err(reason), false) => {
+                                return Err(format!(
+                                    "mount is unresponsive ({reason}). Close files using the volume, then run: rws connect {} --repair. Unsaved writes on the dead mount may be lost",
+                                    w.name
+                                ));
+                            }
+                            (Err(reason), true) => {
+                                eprintln!(
+                                    "Unresponsive mount ({reason}); ejecting {} before remounting.",
+                                    w.mount_root.display()
+                                );
+                                let code = invoke(
+                                    "/usr/sbin/diskutil",
+                                    &[
+                                        "unmount".into(),
+                                        "force".into(),
+                                        w.mount_root.to_string_lossy().into_owned(),
+                                    ],
+                                    false,
+                                    false,
+                                )?;
+                                if code != 0 || rws::lifecycle::identity(&w.mount_root)?.is_some() {
+                                    return Err(
+                                        "forced ejection failed; the volume is still mounted. Close programs using it and retry".into(),
+                                    );
+                                }
+                                rws::lifecycle::forget(&path, w)?;
+                                // Fall through to the normal mount sequence below.
+                            }
+                        }
+                    } else if verify_existing {
                         rws::lifecycle::attest(w, &actual)?;
                         rws::lifecycle::record(&path, w, actual)?;
                         println!("Existing volume verified and connected: {}", w.name);
                         return Ok(0);
+                    } else {
+                        return Err("a filesystem is already mounted here, but its identity is unverified; leaving it untouched. Use connect NAME --verify-existing to verify it against SSH without disconnecting".into());
                     }
-                    return Err("a filesystem is already mounted here, but its identity is unverified; leaving it untouched. Use connect NAME --verify-existing to verify it against SSH without disconnecting".into());
                 }
                 let version = check_sshfs(&config)?;
                 if fskit && !raw_names && !version.contains("3.7.5-rws-fskit3") {

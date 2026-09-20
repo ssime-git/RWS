@@ -20,6 +20,7 @@ remove real usernames, hosts, paths and tokens before sharing them in an issue.
 | Commands show Darwin/local tools | How was the command started? | Ordinary terminals/IDE processes remain local. Use **Lancer sur la VM** or explicit RWS SSH commands. Automatic routing is still [#1–3](https://github.com/ssime-git/RWS/issues/1). |
 | Agent not found on VM | Agent executable in remote login environment | Install/configure it remotely or use its absolute remote path. No local fallback occurs. |
 | Disconnect says busy | Open files/terminals using the mounted directory | Close them or leave the directory, then retry normal disconnect. Do not force-unmount by default. |
+| Volume still mounted but every operation fails (`Input/output error`) after a network loss | `rws status` reports `connected (unresponsive mount: …)` | The mount is a zombie: close files using it, then click **Réparer** in the app or run `rws connect NAME --repair` — it ejects the dead volume and mounts again. The forced ejection is refused while the mount answers normally; unsaved writes on the dead mount may be lost. **Actualiser** only re-reads state and repairs nothing. |
 | RWS operation timed out | Diagnostic message and real mount status | Inspect status before retrying. Restart the app if it marks operation state uncertain. Do not assume timeout means no side effect occurred. |
 | No update button / no updates | Development versus production bundle | Development updates are disabled. Follow [release readiness](macos-app.md); rebuilding is not production auto-update delivery. |
 

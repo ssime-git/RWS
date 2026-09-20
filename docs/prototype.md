@@ -83,7 +83,10 @@ until you leave the volume and re-enter it. Details:
 
 Use the [connection guide](connection.md) for `connect`, `disconnect`, `status`,
 saved backend settings and Finder-launchable shortcuts. `mount`/`unmount` remain
-aliases. Mount identity verification now uses a disposable remote proof file and
+aliases. `status` probes a verified mount with a bounded directory read and
+reports `connected (unresponsive mount: …)` when I/O fails or hangs — typically
+after a network loss; `connect NAME --repair` then force-ejects that dead
+volume and mounts again, and is refused while the mount answers normally. Mount identity verification now uses a disposable remote proof file and
 therefore requires a writable workspace root. Existing volumes can be verified
 with `connect NAME --verify-existing` without disconnecting them.
 

@@ -69,6 +69,33 @@ pub fn identity(_root: &Path) -> Result<Option<MountIdentity>, String> {
     Err("mount inspection is currently supported on macOS only".into())
 }
 
+/// Bounded I/O probe of a mounted root. A network mount can stay in the mount
+/// table while every operation fails or hangs (a "zombie" after link loss);
+/// the probe runs in a helper thread so a hang becomes a timeout, never a
+/// stalled caller. Err carries the reason the mount is unusable.
+pub fn probe_health(root: &Path, timeout: std::time::Duration) -> Result<(), String> {
+    let root = root.to_path_buf();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = fs::read_dir(&root)
+            .map(|mut entries| {
+                // Force one real directory operation, tolerating an empty root.
+                entries.next().map(|entry| entry.map(|_| ())).transpose()
+            })
+            .and_then(std::convert::identity)
+            .map(|_| ())
+            .map_err(|e| e.to_string());
+        let _ = sender.send(result);
+    });
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "no response within {} seconds",
+            timeout.as_secs().max(1)
+        )),
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct Receipt {
     host: String,
@@ -233,6 +260,25 @@ pub fn attest(w: &Workspace, expected: &MountIdentity) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn probe_health_accepts_a_readable_directory_and_reports_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(probe_health(temp.path(), std::time::Duration::from_secs(2)).is_ok());
+        // An I/O failure (here: permissions) must be reported, not hidden.
+        let sealed = temp.path().join("sealed");
+        fs::create_dir(&sealed).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
+        let result = probe_health(&sealed, std::time::Duration::from_secs(2));
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700)).unwrap();
+        if nix_is_root() {
+            return; // root ignores permission bits; the error leg needs a user
+        }
+        assert!(result.is_err(), "{result:?}");
+    }
+    fn nix_is_root() -> bool {
+        unsafe { libc::geteuid() == 0 }
+    }
     #[test]
     fn failed_challenge_write_removes_only_its_exclusive_directory() {
         let temp = tempfile::tempdir().unwrap();

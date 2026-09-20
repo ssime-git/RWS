@@ -17,6 +17,14 @@ final class CommandBuilderTests: XCTestCase {
         XCTAssertEqual(CLICommand.status(config: config, workspace: nil).arguments, ["--config", "/tmp/config.json", "status", "--no-probe"])
     }
 
+    func testConnectRepairTargetsTheDeadMountExplicitly() {
+        let config = URL(fileURLWithPath: "/tmp/config.json")
+        XCTAssertEqual(
+            CLICommand.connectRepair(config: config, workspace: "demo").arguments,
+            ["--config", "/tmp/config.json", "connect", "demo", "--repair"]
+        )
+    }
+
     func testDeltaRulesRefreshOnlyTouchesExistingRules() {
         let config = URL(fileURLWithPath: "/tmp/config.json")
         XCTAssertEqual(
