@@ -13,22 +13,24 @@ enum AgentLauncher {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    static func script(binary: URL, config: URL, workspace: String, executable: String, mode: Mode) -> String {
+    /// startPath: absolute mounted directory to start in; nil = workspace root.
+    static func script(binary: URL, config: URL, workspace: String, executable: String, mode: Mode, startPath: String?) -> String {
         switch mode {
         case .remote:
+            let selection = startPath.map { ["--cwd", $0] } ?? ["--workspace", workspace]
             return "#!/bin/sh\nRWS_AUTO_MODE=remote\nexport RWS_AUTO_MODE\nexec "
-                + [binary.path, "--config", config.path, "agent", "--workspace", workspace, "--", executable]
+                + ([binary.path, "--config", config.path, "agent"] + selection + ["--", executable])
                     .map(quote).joined(separator: " ") + "\n"
         case .local(let mountRoot):
             return "#!/bin/sh\nRWS_AUTO_MODE=local\nexport RWS_AUTO_MODE\ncd "
-                + quote(mountRoot)
+                + quote(startPath ?? mountRoot)
                 + " || { echo 'RWS: dossier monté introuvable — connectez l’espace d’abord.' >&2; exit 1; }\nexec "
                 + quote(executable) + "\n"
         }
     }
 
     @MainActor
-    static func launch(binary: URL, config: URL, workspace: String, executable: String, mode: Mode) async throws {
+    static func launch(binary: URL, config: URL, workspace: String, executable: String, mode: Mode, startPath: String?) async throws {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("RWS/AgentLaunchers", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
@@ -36,7 +38,7 @@ enum AgentLauncher {
         // Unique launcher prevents a second click from changing a pending launch.
         let kind = if case .remote = mode { "VM" } else { "local" }
         let file = directory.appendingPathComponent("Agent-\(kind)-\(UUID().uuidString).command")
-        try Data(script(binary: binary, config: config, workspace: workspace, executable: executable, mode: mode).utf8).write(to: file, options: .atomic)
+        try Data(script(binary: binary, config: config, workspace: workspace, executable: executable, mode: mode, startPath: startPath).utf8).write(to: file, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
         guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {
             throw NSError(domain: "RWS", code: 1, userInfo: [NSLocalizedDescriptionKey: "Terminal est introuvable sur ce Mac."])

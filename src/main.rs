@@ -73,6 +73,9 @@ enum Action {
     Agent {
         #[arg(long)]
         workspace: Option<String>,
+        /// Start in the remote directory mapped from this mounted path.
+        #[arg(long, conflicts_with = "workspace")]
+        cwd: Option<PathBuf>,
         #[arg(long)]
         dry_run: bool,
         /// Disable PTY allocation for noninteractive diagnostics.
@@ -304,6 +307,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                 git_context: true,
                 ..
             }
+            | Action::Agent { cwd: Some(_), .. }
     );
     let config = if strict_routing {
         Config::load_existing(&path)?
@@ -497,11 +501,23 @@ fn run(cli: Cli) -> Result<i32, String> {
         }
         Action::Agent {
             workspace,
+            cwd,
             dry_run,
             no_tty,
             command,
         } => {
-            let (w, remote) = resolve(&config, workspace.as_deref())?;
+            let (w, remote) = match cwd {
+                Some(local) => {
+                    let selected = rws::routing::resolve_directory(&config, &local)?.ok_or(
+                        "directory is not in a registered RWS workspace; refusing local fallback",
+                    )?;
+                    if !dry_run {
+                        require_verified_mount(&path, &selected.0)?;
+                    }
+                    selected
+                }
+                None => resolve(&config, workspace.as_deref())?,
+            };
             let script = remote_agent(&remote, &command)?;
             if !dry_run {
                 eprintln!("RWS agent on VM: {}:{}", w.host, remote);

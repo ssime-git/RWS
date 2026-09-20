@@ -4,6 +4,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var model: AppModel
     @State private var agentExecutable = "claude"
+    @State private var agentSubdirectory = ""
     @State private var name = ""
     @State private var host = ""
     @State private var remotePath = ""
@@ -26,13 +27,15 @@ struct ContentView: View {
                     workspaceControls
                     HStack {
                         TextField("Agent : claude, codex…", text: $agentExecutable)
-                            .textFieldStyle(.roundedBorder).frame(maxWidth: 230)
-                        Button("Lancer sur la VM") { Task { await model.launchAgent(agentExecutable, on: .vm) } }
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: 200)
+                        TextField("Sous-dossier (optionnel)", text: $agentSubdirectory)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: 180)
+                        Button("Lancer sur la VM") { Task { await model.launchAgent(agentExecutable, on: .vm, subdirectory: agentSubdirectory) } }
                             .disabled(model.selectedWorkspace == nil || !model.configurationReady || agentExecutable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        Button("Lancer en local") { Task { await model.launchAgent(agentExecutable, on: .localMount) } }
+                        Button("Lancer en local") { Task { await model.launchAgent(agentExecutable, on: .localMount, subdirectory: agentSubdirectory) } }
                             .disabled(model.selectedWorkspace == nil || !model.configurationReady || agentExecutable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    Text("Sur la VM : l’agent distant s’exécute dans le dossier distant. En local : l’agent de ce Mac s’exécute dans le dossier monté, sans bascule automatique.")
+                    Text("Sur la VM : l’agent distant s’exécute dans le dossier distant (sous-dossier relatif de l’espace si renseigné). En local : l’agent de ce Mac s’exécute dans le dossier monté, sans bascule automatique.")
                         .font(.caption).foregroundStyle(.secondary)
                     Divider()
                     addWorkspace

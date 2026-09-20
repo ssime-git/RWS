@@ -130,7 +130,11 @@ A similar activation issue is tracked in [macFUSE issue #1194](https://github.co
 ## Agents installed on the VM
 
 `rws agent --workspace demo -- claude` (or `codex`, `opencode`, another executable)
-uses SSH with a PTY and the remote user's login shell. It loads the remote login
+uses SSH with a PTY and the remote user's login shell.
+`rws agent --cwd /mounted/subdirectory -- claude` starts in the remote
+directory mapped from that mounted path instead of the workspace root, with
+the same resolution and verified-mount requirement as `exec --cwd`; the app's
+optional « Sous-dossier » field uses this route. It loads the remote login
 profile, changes to the configured remote directory afterwards, prints the remote
 host/OS/directory on stderr and execs the requested agent there. Arguments after
 `--` are literal. `--no-tty` supports noninteractive diagnostics such as `--version`.

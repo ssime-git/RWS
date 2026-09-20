@@ -990,3 +990,43 @@ fn delta_rules_if_installed_skips_absent_rules_and_refreshes_existing_ones() {
     assert!(content.contains(env!("CARGO_BIN_EXE_rws")), "{content}");
     assert!(!content.contains("/stale/rws"), "{content}");
 }
+#[test]
+fn agent_cwd_maps_the_subdirectory_like_exec() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    let root = temp.path().join("mount");
+    std::fs::create_dir_all(root.join("appli sub")).unwrap();
+    register(&config, &root);
+    let out = Command::new(env!("CARGO_BIN_EXE_rws"))
+        .arg("--config")
+        .arg(&config)
+        .args(["agent", "--dry-run", "--cwd"])
+        .arg(root.join("appli sub"))
+        .args(["--", "claude"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // The remote script must target the mapped subdirectory under the
+    // remote root (its embedded quote arrives shell-escaped).
+    assert!(stdout.contains("appli sub"), "{stdout}");
+    assert!(stdout.contains("/srv/project with "), "{stdout}");
+    // --cwd and --workspace stay mutually exclusive, like exec.
+    let conflict = run(
+        &config,
+        &[
+            "agent",
+            "--workspace",
+            "demo",
+            "--cwd",
+            "/tmp",
+            "--",
+            "claude",
+        ],
+    );
+    assert!(!conflict.status.success());
+}

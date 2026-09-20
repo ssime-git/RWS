@@ -255,23 +255,35 @@ final class AppModel: ObservableObject {
         await refreshStatus()
     }
 
-    func launchAgent(_ executable: String, on target: AgentTarget = .vm) async {
+    func launchAgent(_ executable: String, on target: AgentTarget = .vm, subdirectory: String = "") async {
         let executable = executable.trimmingCharacters(in: .whitespacesAndNewlines)
         guard configurationReady, !isBusy, !updatesPreparing, !executable.isEmpty,
-              !executable.hasPrefix("-"), !executable.contains("\0"), let selectedWorkspace else { return }
+              !executable.hasPrefix("-"), !executable.contains("\0"), let selectedWorkspace,
+              let workspace = configuration.workspaces.first(where: { $0.name == selectedWorkspace }) else { return }
+        let subdirectory = subdirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        var startPath: String? = nil
+        if !subdirectory.isEmpty {
+            // A relative path inside the mounted workspace only.
+            guard !subdirectory.hasPrefix("/"), !subdirectory.contains("\0"),
+                  !subdirectory.split(separator: "/").contains("..") else {
+                alertMessage = "Le sous-dossier doit être un chemin relatif dans l’espace, sans « .. »."
+                return
+            }
+            startPath = workspace.mountRoot + "/" + subdirectory
+        }
         let mode: AgentLauncher.Mode
         switch target {
         case .vm:
             mode = .remote
         case .localMount:
-            guard let workspace = configuration.workspaces.first(where: { $0.name == selectedWorkspace }) else { return }
             mode = .local(mountRoot: workspace.mountRoot)
         }
         isBusy = true
         await updateGuard.beginOperation()
         do {
             try await AgentLauncher.launch(binary: cliURL, config: configurationURL,
-                                           workspace: selectedWorkspace, executable: executable, mode: mode)
+                                           workspace: selectedWorkspace, executable: executable, mode: mode,
+                                           startPath: startPath)
             output = switch target {
             case .vm:
                 "Terminal distant ouvert pour \(selectedWorkspace). Le terminal affichera le résultat de la connexion et l’identité de la VM."

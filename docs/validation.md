@@ -432,3 +432,34 @@ BatchMode where applicable and any interactive prompt therefore fails into
 the same visible-error path as an unreachable host. Section 6 of the
 architecture document now records the per-path integration decision this
 evidence supports.
+
+## Exact context and worktrees acceptance — 2026-09-20, 19:40 local
+
+Executed with two distinct hosts: the razer-documents workspace
+(razer@razer-1) and a disposable OrbStack Alpine machine
+(rws-second@orb, workspace orb-second, remote root with accents and
+spaces: "rws éssai deux").
+
+- **Two hosts, subdirectories, accents/spaces:** `exec --cwd` from mounted
+  subdirectories resolved to the exact remote directory on the right host on
+  both machines ("…/rws éssai deux/sous dossier" on rws-second;
+  "…/Documents/dossier éàç ü" on razer-1).
+- **Agent in a chosen subdirectory:** new `rws agent --cwd` started the
+  remote login environment in the mapped subdirectory on both hosts; the
+  app's launcher gains an optional relative-subdirectory field using this
+  route (".." and absolute paths rejected).
+- **Escaping symlink:** a mounted symlink pointing outside the workspace was
+  rejected ("escapes its registered RWS workspace through a symlink").
+- **Worktree with Mac-absolute metadata:** a `git worktree` created from the
+  Mac inside the mount carries `gitdir: /Volumes/…`; `exec --git-context`
+  from that worktree ran Git remotely on the mapped directory with the right
+  branch, and the `.git` file was byte-identical afterwards — metadata
+  preserved, nothing rewritten.
+- No Python environment or other local artifact was created in the remote
+  projects by these runs.
+
+The orb-second workspace and OrbStack machine are kept for future
+multi-host testing; the workspace was disconnected after the runs.
+Limits: the second host is a local virtual machine, not a second physical
+network; Delta's own isolated-checkout relocation remains out of scope as
+documented in docs/connection.md.
