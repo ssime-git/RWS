@@ -49,7 +49,9 @@ rws --config path/to/config.json hook install   # same, with that config baked i
 `hook install` appends one marked line to `~/.zshrc` (`$ZDOTDIR` respected,
 `--zshrc PATH` overrides) and replaces its own previous line on re-run; other
 content is preserved. The equivalent manual form is
-`eval "$(rws hook zsh)"` in `~/.zshrc`.
+`eval "$(rws hook zsh)"` in `~/.zshrc`. The macOS app runs this installation
+automatically for its active configuration and bundled CLI, so app users get
+the integration without any manual command.
 
 With the hook installed, `cd` into a verified mount (or opening a terminal
 there) switches the interactive zsh into `rws shell` on the mapped remote

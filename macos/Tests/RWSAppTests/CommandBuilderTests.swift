@@ -16,4 +16,12 @@ final class CommandBuilderTests: XCTestCase {
         XCTAssertEqual(CLICommand.disconnect(config: config, workspace: "demo").arguments, ["--config", "/tmp/config.json", "disconnect", "demo"])
         XCTAssertEqual(CLICommand.status(config: config, workspace: nil).arguments, ["--config", "/tmp/config.json", "status", "--no-probe"])
     }
+
+    func testHookInstallTargetsTheActiveConfiguration() {
+        let config = URL(fileURLWithPath: "/tmp/config.json")
+        XCTAssertEqual(
+            CLICommand.hookInstall(config: config).arguments,
+            ["--config", "/tmp/config.json", "hook", "install"]
+        )
+    }
 }

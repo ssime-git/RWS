@@ -113,6 +113,15 @@ RWS attempts to add a favorite. If it cannot, follow the displayed manual
 instructions or the [Finder guide](finder-macos.md). A favorite is a shortcut to a
 mounted directory; it does not reconnect an offline workspace when clicked.
 
+Once a configuration is active, the app also installs the
+[zsh terminal integration](prototype.md#automatic-terminal-switch-zsh)
+automatically: in every **new** interactive zsh, `cd` into a connected
+workspace opens the remote shell on the matching remote directory, and `exit`
+returns to the local shell. Terminals already open before installation need one
+`source ~/.zshrc`. The integration is one marked line in `~/.zshrc`; remove
+that line or set `RWS_NO_AUTO_SHELL=1` to opt out, and set the
+`installShellHook` app preference to `false` to stop automatic installation.
+
 ## 5. Run an agent on the VM
 
 1. Select the workspace.

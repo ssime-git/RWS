@@ -111,6 +111,7 @@ final class AppModel: ObservableObject {
             preferences.set(source.path, forKey: "configurationSource")
             startupMessage = "Configuration retrouvée — \(decoded.workspaces.count) espace(s)."
             await checkPrerequisites()
+            await installShellHook()
             await refreshStatus()
             if let mounted = decoded.workspaces.first(where: { output.contains("\($0.name): connected (verified RWS mount)") }) {
                 selectedWorkspace = mounted.name
@@ -174,12 +175,31 @@ final class AppModel: ObservableObject {
         guard await perform(.add(config: configurationURL, name: name, host: host, remotePath: remotePath, mountPath: mountPath), refreshAfter: false) else { return }
         load()
         selectedWorkspace = name
+        await installShellHook()
         guard prerequisitesReady else {
             alertMessage = "Espace enregistré. Configurez macFUSE et SSHFS pour le monter et l’ajouter au Finder."
             await refreshStatus()
             return
         }
         await openSelected()
+    }
+
+    /// Keep the zsh auto-shell integration current for the active
+    /// configuration and bundled CLI. Failure never blocks the app;
+    /// RWS_NO_AUTO_SHELL and removing the marked line stay user choices.
+    private func installShellHook() async {
+        guard configurationReady,
+              preferences.object(forKey: "installShellHook") as? Bool ?? true else { return }
+        do {
+            let result = try await runner.run(
+                executable: cliURL,
+                arguments: CLICommand.hookInstall(config: configurationURL).arguments)
+            if result.exitCode != 0 {
+                output = "Intégration terminal non installée : \(result.stderr.isEmpty ? result.stdout : result.stderr)"
+            }
+        } catch {
+            output = "Intégration terminal non installée : \(error.localizedDescription)"
+        }
     }
 
     func saveSettings(sshfs: String, fskit: Bool) async {
