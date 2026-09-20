@@ -70,21 +70,27 @@ pub fn identity(_root: &Path) -> Result<Option<MountIdentity>, String> {
 }
 
 /// Bounded I/O probe of a mounted root. A network mount can stay in the mount
-/// table while every operation fails or hangs (a "zombie" after link loss);
-/// the probe runs in a helper thread so a hang becomes a timeout, never a
-/// stalled caller. Err carries the reason the mount is unusable.
+/// table while operations fail or hang (a "zombie" after link loss) — and a
+/// wedge can be partial: a cached root listing still answers while deeper
+/// operations hang forever. The probe therefore looks up a random,
+/// nonexistent name under the root: a negative lookup for a fresh name
+/// cannot be served from any cache and must round-trip to the filesystem.
+/// NotFound is the healthy answer. The probe runs in a helper thread so a
+/// hang becomes a timeout, never a stalled caller; nothing is ever created.
 pub fn probe_health(root: &Path, timeout: std::time::Duration) -> Result<(), String> {
-    let root = root.to_path_buf();
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let marker = root.join(format!(".rws-health-{}-{stamp}", std::process::id()));
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let result = fs::read_dir(&root)
-            .map(|mut entries| {
-                // Force one real directory operation, tolerating an empty root.
-                entries.next().map(|entry| entry.map(|_| ())).transpose()
-            })
-            .and_then(std::convert::identity)
-            .map(|_| ())
-            .map_err(|e| e.to_string());
+        let result = match fs::symlink_metadata(&marker) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            // A name collision still proves the lookup round-tripped.
+            Ok(_) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        };
         let _ = sender.send(result);
     });
     match receiver.recv_timeout(timeout) {
