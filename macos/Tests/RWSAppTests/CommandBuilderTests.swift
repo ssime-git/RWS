@@ -17,6 +17,14 @@ final class CommandBuilderTests: XCTestCase {
         XCTAssertEqual(CLICommand.status(config: config, workspace: nil).arguments, ["--config", "/tmp/config.json", "status", "--no-probe"])
     }
 
+    func testDeltaRulesRefreshOnlyTouchesExistingRules() {
+        let config = URL(fileURLWithPath: "/tmp/config.json")
+        XCTAssertEqual(
+            CLICommand.deltaRulesRefresh(config: config).arguments,
+            ["--config", "/tmp/config.json", "delta-rules", "--if-installed"]
+        )
+    }
+
     func testHookInstallTargetsTheActiveConfiguration() {
         let config = URL(fileURLWithPath: "/tmp/config.json")
         XCTAssertEqual(

@@ -111,7 +111,7 @@ final class AppModel: ObservableObject {
             preferences.set(source.path, forKey: "configurationSource")
             startupMessage = "Configuration retrouvée — \(decoded.workspaces.count) espace(s)."
             await checkPrerequisites()
-            await installShellHook()
+            await refreshIntegrations()
             await refreshStatus()
             if let mounted = decoded.workspaces.first(where: { output.contains("\($0.name): connected (verified RWS mount)") }) {
                 selectedWorkspace = mounted.name
@@ -175,7 +175,7 @@ final class AppModel: ObservableObject {
         guard await perform(.add(config: configurationURL, name: name, host: host, remotePath: remotePath, mountPath: mountPath), refreshAfter: false) else { return }
         load()
         selectedWorkspace = name
-        await installShellHook()
+        await refreshIntegrations()
         guard prerequisitesReady else {
             alertMessage = "Espace enregistré. Configurez macFUSE et SSHFS pour le monter et l’ajouter au Finder."
             await refreshStatus()
@@ -184,21 +184,30 @@ final class AppModel: ObservableObject {
         await openSelected()
     }
 
-    /// Keep the zsh auto-shell integration current for the active
-    /// configuration and bundled CLI. Failure never blocks the app;
-    /// RWS_NO_AUTO_SHELL and removing the marked line stay user choices.
-    private func installShellHook() async {
-        guard configurationReady,
-              preferences.object(forKey: "installShellHook") as? Bool ?? true else { return }
+    /// Keep the zsh auto-shell integration and any previously installed
+    /// Delta rules current for the active configuration and bundled CLI.
+    /// Failure never blocks the app. Delta rules are only refreshed, never
+    /// installed here — first installation stays an explicit user action.
+    private func refreshIntegrations() async {
+        guard configurationReady else { return }
+        if preferences.object(forKey: "installShellHook") as? Bool ?? true {
+            await runIntegration(.hookInstall(config: configurationURL),
+                                 failure: "Intégration terminal non installée")
+        }
+        if preferences.object(forKey: "refreshDeltaRules") as? Bool ?? true {
+            await runIntegration(.deltaRulesRefresh(config: configurationURL),
+                                 failure: "Règles Delta non rafraîchies")
+        }
+    }
+
+    private func runIntegration(_ command: CLICommand, failure: String) async {
         do {
-            let result = try await runner.run(
-                executable: cliURL,
-                arguments: CLICommand.hookInstall(config: configurationURL).arguments)
+            let result = try await runner.run(executable: cliURL, arguments: command.arguments)
             if result.exitCode != 0 {
-                output = "Intégration terminal non installée : \(result.stderr.isEmpty ? result.stdout : result.stderr)"
+                output = "\(failure) : \(result.stderr.isEmpty ? result.stdout : result.stderr)"
             }
         } catch {
-            output = "Intégration terminal non installée : \(error.localizedDescription)"
+            output = "\(failure) : \(error.localizedDescription)"
         }
     }
 

@@ -124,6 +124,10 @@ struct CLICommand: Equatable {
     static func hookInstall(config: URL) -> Self {
         Self(arguments: prefix(config) + ["hook", "install"])
     }
+
+    static func deltaRulesRefresh(config: URL) -> Self {
+        Self(arguments: prefix(config) + ["delta-rules", "--if-installed"])
+    }
 }
 
 enum RegisteredMountState: Sendable, Equatable { case unknown, active, inactive }

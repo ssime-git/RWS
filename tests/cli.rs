@@ -859,3 +859,50 @@ fn hook_bakes_an_absolute_config_path_from_a_relative_argument() {
     let line = std::fs::read_to_string(&zshrc).unwrap();
     assert!(!line.contains("'rel-config.json'"), "{line}");
 }
+#[test]
+fn delta_rules_if_installed_skips_absent_rules_and_refreshes_existing_ones() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, &temp.path().join("mount"));
+    let rules = temp.path().join("AGENT.md");
+    // No rules file: refresh must succeed without creating anything.
+    let out = run(
+        &config,
+        &[
+            "delta-rules",
+            "--output",
+            rules.to_str().unwrap(),
+            "--if-installed",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!rules.exists());
+    // Existing managed block: refresh rewrites it with the current binary.
+    std::fs::write(
+        &rules,
+        "mine\n<!-- BEGIN RWS REMOTE EXECUTION -->\nold '/stale/rws'\n<!-- END RWS REMOTE EXECUTION -->\n",
+    )
+    .unwrap();
+    let out = run(
+        &config,
+        &[
+            "delta-rules",
+            "--output",
+            rules.to_str().unwrap(),
+            "--if-installed",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let content = std::fs::read_to_string(&rules).unwrap();
+    assert!(content.starts_with("mine\n"), "{content}");
+    assert!(content.contains(env!("CARGO_BIN_EXE_rws")), "{content}");
+    assert!(!content.contains("/stale/rws"), "{content}");
+}

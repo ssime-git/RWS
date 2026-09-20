@@ -28,6 +28,9 @@ enum Action {
     DeltaRules {
         #[arg(long)]
         output: Option<PathBuf>,
+        /// Only refresh rules that already exist; never install them anew.
+        #[arg(long)]
+        if_installed: bool,
     },
     /// Remember this machine's mount backend and SSHFS executable.
     Settings {
@@ -304,11 +307,21 @@ fn run(cli: Cli) -> Result<i32, String> {
         Config::load(&path)?
     };
     match cli.command {
-        Action::DeltaRules { output } => {
+        Action::DeltaRules {
+            output,
+            if_installed,
+        } => {
             let target = match output {
                 Some(p) => p,
                 None => rws::agent_rules::default_delta_rules_path()?,
             };
+            if if_installed && !rws::agent_rules::managed_block_present(&target)? {
+                println!(
+                    "No RWS rules in {}; nothing refreshed. Run delta-rules without --if-installed to install them.",
+                    target.display()
+                );
+                return Ok(0);
+            }
             let config = path
                 .canonicalize()
                 .map_err(|e| format!("config path: {e}"))?;

@@ -122,6 +122,9 @@ is remembered for that shell. `exit` returns to the local shell. Terminals alrea
 `source ~/.zshrc`. The integration is one marked line in `~/.zshrc`; remove
 that line or set `RWS_NO_AUTO_SHELL=1` to opt out, and set the
 `installShellHook` app preference to `false` to stop automatic installation.
+If [Delta rules](connection.md#delta-and-linux-commands) were installed, the
+app refreshes their embedded paths the same way (`refreshDeltaRules`
+preference to opt out); it never installs them uninvited.
 
 ## 5. Run an agent on the VM or locally
 

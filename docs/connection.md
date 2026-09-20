@@ -87,8 +87,18 @@ filesystem I/O remains an underlying FSKit limitation, even with subprocess dead
 This installs a managed block in Delta's personal rules, choosing the existing
 nonempty `AGENT.md`/`AGENTS.md` in its documented user directories (or
 `DELTA_CONFIG_DIR`). Existing instructions are preserved and backed up privately
-beside the RWS configuration before changing them. Repeating installation is
-idempotent. Use `--output /absolute/path/AGENT.md` for an explicit location.
+beside the RWS configuration (`agent-rule-backups/`) before changing them.
+Repeating installation is idempotent: only the managed block between the
+`BEGIN/END RWS REMOTE EXECUTION` markers is replaced, never your own rules.
+Use `--output /absolute/path/AGENT.md` for an explicit location.
+
+The block embeds the absolute paths of the `rws` binary and configuration that
+installed it. Once installed, the app keeps it current: at startup and after a
+workspace is added, it runs `delta-rules --if-installed`, which rewrites an
+existing block with the bundled CLI's paths and does nothing when no block
+exists — the first installation stays an explicit action (the app button or
+the command above). Set the app preference `refreshDeltaRules` to `false` to
+stop the automatic refresh; removing the block re-enables nothing by itself.
 
 The installed rule applies across projects. It checks the actual filesystem
 checkout with `rws context --cwd /absolute/checkout`. A verified registered mount

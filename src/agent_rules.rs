@@ -141,6 +141,15 @@ fn exclusive_file(directory: &Path, prefix: &str, contents: &[u8]) -> Result<Pat
 }
 
 /// Preserve custom rules, back up changed existing content, and atomically install private rules.
+/// Whether the target already carries an RWS-managed rules block.
+pub fn managed_block_present(target: &Path) -> Result<bool, String> {
+    match fs::read_to_string(target) {
+        Ok(contents) => Ok(contents.contains(BEGIN)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("read rules: {error}")),
+    }
+}
+
 pub fn install(config: &Path, binary: &Path, target: &Path) -> Result<(), String> {
     let block = managed_rules(config, binary)?;
     quoted_absolute(target)?;
