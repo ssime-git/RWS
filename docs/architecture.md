@@ -135,6 +135,23 @@ not weaken them. Authentication must work without a mount-time password prompt.
 Remote services and files retain their remote access controls. macFUSE/SSHFS are
 external runtime dependencies and are not updated by Sparkle.
 
+### Integration write policy: refresh ≠ install
+
+Two files outside RWS carry its integrations, with deliberately different
+write rules. Keep this invariant when adding integrations.
+
+| File | First installation | Automatic behavior at app startup |
+| --- | --- | --- |
+| `~/.zshrc` (marked eval line) | Automatic once a configuration is active — the shell hook is RWS's own feature on a machine whose user installed RWS | `hook install` rewrites the single marked line with the current bundle/config paths (`installShellHook` preference opts out) |
+| Delta's `AGENT.md` (marked block) | **Never automatic.** Another application's configuration is only written on an explicit action: the app button or `rws delta-rules` | `delta-rules --if-installed` rewrites an **existing** block's paths and does nothing when no block is present (`refreshDeltaRules` preference opts out) |
+
+Consequence developers must preserve: removing or renaming `AGENT.md` is an
+uninstall the app respects — no startup path may recreate it. Removing the
+`.zshrc` marked line, by contrast, is undone at the next app startup unless
+`installShellHook` is disabled; `RWS_NO_AUTO_SHELL=1` remains the per-shell
+opt-out that survives reinstallation. Both writers only ever replace their own
+marked region and back up or preserve surrounding content.
+
 ## 6. Target architecture — not implemented
 
 ```mermaid
