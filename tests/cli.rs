@@ -794,6 +794,8 @@ fn hook_zsh_prints_snippet_embedding_this_executable() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+// The installed line is evaluated with zsh, absent from Linux CI runners.
+#[cfg(target_os = "macos")]
 #[test]
 fn hook_install_writes_zshrc_line_with_config_and_is_idempotent() {
     let temp = tempfile::tempdir().unwrap();

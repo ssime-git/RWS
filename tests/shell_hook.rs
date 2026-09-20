@@ -1,4 +1,7 @@
 //! Behavior of the generated zsh auto-shell hook, driven by a fake rws binary.
+//! macOS only: the hook targets macOS mounts, needs zsh, and the PTY harness
+//! uses the BSD script(1) argument order.
+#![cfg(target_os = "macos")]
 use std::path::Path;
 
 fn write_fake_rws(dir: &Path, mode_json: &str, exit_code: i32) -> std::path::PathBuf {
