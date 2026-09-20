@@ -234,20 +234,35 @@ final class AppModel: ObservableObject {
         await refreshStatus()
     }
 
-    func launchAgent(_ executable: String) async {
+    func launchAgent(_ executable: String, on target: AgentTarget = .vm) async {
         let executable = executable.trimmingCharacters(in: .whitespacesAndNewlines)
         guard configurationReady, !isBusy, !updatesPreparing, !executable.isEmpty,
               !executable.hasPrefix("-"), !executable.contains("\0"), let selectedWorkspace else { return }
+        let mode: AgentLauncher.Mode
+        switch target {
+        case .vm:
+            mode = .remote
+        case .localMount:
+            guard let workspace = configuration.workspaces.first(where: { $0.name == selectedWorkspace }) else { return }
+            mode = .local(mountRoot: workspace.mountRoot)
+        }
         isBusy = true
         await updateGuard.beginOperation()
         do {
             try await AgentLauncher.launch(binary: cliURL, config: configurationURL,
-                                           workspace: selectedWorkspace, executable: executable)
-            output = "Terminal distant ouvert pour \(selectedWorkspace). Le terminal affichera le résultat de la connexion et l’identité de la VM."
+                                           workspace: selectedWorkspace, executable: executable, mode: mode)
+            output = switch target {
+            case .vm:
+                "Terminal distant ouvert pour \(selectedWorkspace). Le terminal affichera le résultat de la connexion et l’identité de la VM."
+            case .localMount:
+                "Terminal local ouvert dans le dossier monté de \(selectedWorkspace). Les commandes s’exécutent sur ce Mac."
+            }
         } catch { alertMessage = error.localizedDescription }
         await updateGuard.endOperation()
         isBusy = false
     }
+
+    enum AgentTarget { case vm, localMount }
 
     func installDeltaRules() async { await perform(.deltaRules(config: configurationURL)) }
 

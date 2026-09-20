@@ -123,22 +123,29 @@ is remembered for that shell. `exit` returns to the local shell. Terminals alrea
 that line or set `RWS_NO_AUTO_SHELL=1` to opt out, and set the
 `installShellHook` app preference to `false` to stop automatic installation.
 
-## 5. Run an agent on the VM
+## 5. Run an agent on the VM or locally
 
 1. Select the workspace.
-2. Enter an executable installed on that host, such as `claude`, `codex`, or its
-   absolute remote path. The app field accepts the executable, not a whole shell command.
-3. Click **Lancer sur la VM**. macOS Terminal opens an SSH session; the agent runs
-   on the VM, initially at the workspace root. Check the displayed host/OS/directory.
+2. Enter an executable, such as `claude` or `codex` (the field accepts the
+   executable, not a whole shell command), then choose where it runs:
+   - **Lancer sur la VM**: macOS Terminal opens an SSH session; the agent
+     installed on the host runs there, initially at the workspace root. Check
+     the displayed host/OS/directory. `RWS_AUTO_MODE=remote` is exported so
+     shells the agent spawns never prompt to switch again.
+   - **Lancer en local**: macOS Terminal runs this Mac's executable inside the
+     mounted folder, with `RWS_AUTO_MODE=local` exported so the terminal
+     integration neither prompts nor switches. Requires the mount to be
+     connected; processes execute on the Mac while files stay remote.
 
-An absent agent or failed SSH connection reports an error; the launcher does not
-run a similarly named local executable as a fallback. Authentication with the
-agent's service must already be configured remotely. The explicit agent launcher
-can work without a filesystem mount if SSH and configuration are ready.
+An absent agent or failed connection reports an error; the VM launcher never
+runs a similarly named local executable as a fallback. Authentication with the
+agent's service must already be configured where the agent runs. The VM
+launcher can work without a filesystem mount if SSH and configuration are ready.
 
-**Opening Ghostty, Terminal or an IDE inside the mount is different:** those
-processes remain local today unless explicitly configured for remote execution.
-See [architecture](architecture.md) and [the missing automatic terminal integration](https://github.com/ssime-git/RWS/issues/3).
+**Opening Ghostty, Terminal or an IDE inside the mount yourself:** interactive
+zsh terminals prompt through the [terminal integration](prototype.md#automatic-terminal-switch-zsh);
+IDE-internal processes remain local — see
+[architecture](architecture.md) and [issue #3](https://github.com/ssime-git/RWS/issues/3).
 
 ## 6. Disconnect, quit and update
 

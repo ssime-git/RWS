@@ -25,12 +25,14 @@ struct ContentView: View {
                     startupStatus
                     workspaceControls
                     HStack {
-                        TextField("Agent installé sur la VM", text: $agentExecutable)
+                        TextField("Agent : claude, codex…", text: $agentExecutable)
                             .textFieldStyle(.roundedBorder).frame(maxWidth: 230)
-                        Button("Lancer sur la VM") { Task { await model.launchAgent(agentExecutable) } }
+                        Button("Lancer sur la VM") { Task { await model.launchAgent(agentExecutable, on: .vm) } }
+                            .disabled(model.selectedWorkspace == nil || !model.configurationReady || agentExecutable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button("Lancer en local") { Task { await model.launchAgent(agentExecutable, on: .localMount) } }
                             .disabled(model.selectedWorkspace == nil || !model.configurationReady || agentExecutable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    Text("Exécutable distant : claude, codex, opencode… Le terminal affiche l’hôte et le dossier avant le lancement.")
+                    Text("Sur la VM : l’agent distant s’exécute dans le dossier distant. En local : l’agent de ce Mac s’exécute dans le dossier monté, sans bascule automatique.")
                         .font(.caption).foregroundStyle(.secondary)
                     Divider()
                     addWorkspace
