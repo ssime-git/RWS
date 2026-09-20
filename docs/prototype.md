@@ -39,6 +39,36 @@ Arguments following `--` are literals. For intentional shell syntax, invoke it e
 
 RWS replaces itself with OpenSSH on Unix for command and terminal handling. `shell` requests a PTY and opens the remote `$SHELL` as a login shell (falling back to `/bin/sh` when unset); use it for interactive coding-agent CLIs already installed and authenticated remotely. Noninteractive `exec` does not request a PTY. Disconnect persistence and cross-device reattachment are not implemented.
 
+## Automatic terminal switch (zsh)
+
+```sh
+rws hook install                      # writes the eval line into ~/.zshrc
+rws --config path/to/config.json hook install   # same, with that config baked in
+```
+
+`hook install` appends one marked line to `~/.zshrc` (`$ZDOTDIR` respected,
+`--zshrc PATH` overrides) and replaces its own previous line on re-run; other
+content is preserved. The equivalent manual form is
+`eval "$(rws hook zsh)"` in `~/.zshrc`.
+
+With the hook installed, `cd` into a verified mount (or opening a terminal
+there) switches the interactive zsh into `rws shell` on the mapped remote
+directory. Leaving that remote shell returns to the local zsh; RWS does not
+switch again until you leave the volume and re-enter it. Details:
+
+- Detection calls `rws context --cwd`, so only registered workspaces with a
+  verified mount identity switch; an unregistered `RWS-` volume reports its
+  error once per entry instead of silently running locally.
+- Scope is interactive zsh only. Scripts, other shells, IDE-internal and
+  noninteractive processes are not covered; broader coverage remains
+  [#3](https://github.com/ssime-git/RWS/issues/3).
+- `RWS_NO_AUTO_SHELL=1` disables the switch for a shell;
+  `RWS_AUTO_PREFIX` overrides the `/Volumes` detection prefix;
+  `RWS_CONFIG` points detection and the shell at a non-default
+  configuration file and overrides a baked `--config` path.
+- The snippet embeds the absolute path of the `rws` that printed it; reprint
+  after moving the binary.
+
 ## Mount and edit
 
 Use the [connection guide](connection.md) for `connect`, `disconnect`, `status`,

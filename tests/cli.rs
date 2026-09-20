@@ -773,3 +773,87 @@ fn agent_always_uses_ssh_and_never_falls_back_locally() {
     assert_eq!(result.status.code(), Some(255));
     assert!(result.stdout.is_empty());
 }
+#[test]
+fn hook_zsh_prints_snippet_embedding_this_executable() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    let out = run(&config, &["hook", "zsh"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let snippet = String::from_utf8_lossy(&out.stdout);
+    assert!(snippet.contains("_rws_auto_shell"));
+    assert!(snippet.contains(env!("CARGO_BIN_EXE_rws")));
+    // With stdout captured — as under eval "$(rws hook zsh)" at every shell
+    // start — no guidance may be printed at all.
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+#[test]
+fn hook_install_writes_zshrc_line_with_config_and_is_idempotent() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    let zshrc = temp.path().join("zshrc");
+    for _ in 0..2 {
+        let out = run(
+            &config,
+            &["hook", "install", "--zshrc", zshrc.to_str().unwrap()],
+        );
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let content = std::fs::read_to_string(&zshrc).unwrap();
+    let lines: Vec<_> = content.lines().filter(|l| l.contains("hook zsh")).collect();
+    assert_eq!(lines.len(), 1, "{content}");
+    assert!(lines[0].contains(env!("CARGO_BIN_EXE_rws")));
+    assert!(lines[0].contains(config.to_str().unwrap()));
+    // The installed line must evaluate: zsh runs it and defines the hook.
+    let check = Command::new("zsh")
+        .args(["-f", "-c"])
+        .arg(format!(
+            "{}\ntypeset -f _rws_auto_shell > /dev/null && echo OK",
+            lines[0]
+        ))
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&check.stdout).contains("OK"),
+        "{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+}
+#[test]
+fn hook_bakes_an_absolute_config_path_from_a_relative_argument() {
+    let temp = tempfile::tempdir().unwrap();
+    let zshrc = temp.path().join("zshrc");
+    let out = Command::new(env!("CARGO_BIN_EXE_rws"))
+        .current_dir(temp.path())
+        .args(["--config", "rel-config.json", "hook", "zsh"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let snippet = String::from_utf8_lossy(&out.stdout);
+    assert!(!snippet.contains("'rel-config.json'"), "{snippet}");
+    assert!(snippet.contains("rel-config.json"), "{snippet}");
+    let install = Command::new(env!("CARGO_BIN_EXE_rws"))
+        .current_dir(temp.path())
+        .args(["--config", "rel-config.json", "hook", "install", "--zshrc"])
+        .arg(&zshrc)
+        .output()
+        .unwrap();
+    assert!(install.status.success());
+    let line = std::fs::read_to_string(&zshrc).unwrap();
+    assert!(!line.contains("'rel-config.json'"), "{line}");
+}

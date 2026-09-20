@@ -68,7 +68,8 @@ An editor extension without a CLI needs its own integration.
 
 | Available now | Not yet delivered |
 | --- | --- |
-| Native macOS app; register/connect/disconnect spaces | Automatic SSH switch when opening a terminal or using `cd` |
+| Native macOS app; register/connect/disconnect spaces | Automatic switch for non-zsh shells, scripts and IDE-internal processes |
+| Opt-in zsh hook: `cd` into a verified mount opens the remote shell | |
 | Generic remote agent launcher and explicit SSH commands | General redirection of Delta's native processes |
 | Config/dependency discovery and actionable errors | One-step clean-Mac dependency installation |
 | Finder pinning with bookmark renewal and manual fallback | Sessions surviving disconnects and cross-device reattachment |

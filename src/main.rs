@@ -78,6 +78,11 @@ enum Action {
         #[arg(last = true, required = true)]
         command: Vec<String>,
     },
+    /// Shell integration that auto-switches into `rws shell` in mounts.
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
     /// Open the remote user's default shell interactively.
     Shell {
         #[arg(long)]
@@ -117,6 +122,17 @@ enum Action {
 enum Backend {
     Default,
     Fskit,
+}
+#[derive(Subcommand)]
+enum HookAction {
+    /// Print the zsh snippet for eval in ~/.zshrc.
+    Zsh,
+    /// Write the eval line into ~/.zshrc (or --zshrc PATH), replacing any
+    /// previously installed RWS line.
+    Install {
+        #[arg(long)]
+        zshrc: Option<PathBuf>,
+    },
 }
 #[derive(Subcommand)]
 enum WorkspaceAction {
@@ -246,6 +262,7 @@ fn ssh_args(host: &str, script: String, tty: bool) -> Vec<String> {
     ]
 }
 fn run(cli: Cli) -> Result<i32, String> {
+    let explicit_config = cli.config.is_some();
     let path = match cli.config {
         Some(p) => p,
         None => default_config()?,
@@ -464,6 +481,41 @@ fn run(cli: Cli) -> Result<i32, String> {
                 eprintln!("RWS agent on VM: {}:{}", w.host, remote);
             }
             invoke("ssh", &ssh_args(&w.host, script, !no_tty), dry_run, true)
+        }
+        Action::Hook { action } => {
+            let binary = std::env::current_exe().map_err(|e| e.to_string())?;
+            // Bake an absolute path: the snippet runs from arbitrary directories.
+            let absolute = std::path::absolute(&path).map_err(|e| e.to_string())?;
+            let baked = explicit_config.then_some(absolute.as_path());
+            match action {
+                HookAction::Zsh => {
+                    print!("{}", rws::shell_hook::zsh_snippet(&binary, baked)?);
+                    // Guidance only for a manual invocation; stay silent under
+                    // eval "$(rws hook zsh)", which runs at every shell start.
+                    use std::io::IsTerminal;
+                    if std::io::stdout().is_terminal() {
+                        eprintln!(
+                            "Add to ~/.zshrc: eval \"$(rws hook zsh)\" — or run: rws hook install"
+                        );
+                        eprintln!("Opt out per shell with RWS_NO_AUTO_SHELL=1.");
+                    }
+                }
+                HookAction::Install { zshrc } => {
+                    let zshrc = match zshrc {
+                        Some(p) => p,
+                        None => {
+                            let base = std::env::var_os("ZDOTDIR")
+                                .or_else(|| std::env::var_os("HOME"))
+                                .ok_or("HOME is unset; supply --zshrc")?;
+                            PathBuf::from(base).join(".zshrc")
+                        }
+                    };
+                    let line = rws::shell_hook::install(&zshrc, &binary, baked)?;
+                    println!("Installed in {}: {line}", zshrc.display());
+                    println!("Open a new terminal, or run: source {}", zshrc.display());
+                }
+            }
+            Ok(0)
         }
         Action::Shell { workspace, dry_run } => {
             let (w, remote) = resolve(&config, workspace.as_deref())?;
