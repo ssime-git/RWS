@@ -2,6 +2,16 @@
 
 Recorded on 2026-09-19. This document distinguishes confirmed user decisions from implementation proposals. The supplied product and technical specification v0.1 is a design input, not authorization to implement every feature it describes.
 
+## Scope correction — 2026-09-20
+
+The original user goal is remote execution naturally following the mounted project,
+including Delta without special agent instructions if technically feasible. The
+narrow explicit-execution prototype below was an implementation stage, not acceptance
+of a reduced final product. The current gap list is [FEATURES.md](../FEATURES.md).
+The native macOS app and release pipeline now exist; historical statements below
+that defer desktop implementation or updater design are superseded by the
+[app guide](macos-app.md). Production updates remain unvalidated.
+
 ## Confirmed direction
 
 - Start the prototype quickly; do not delay it to fully design the future applications.

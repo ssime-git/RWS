@@ -18,8 +18,10 @@ the app bundle. Existing detected configurations are reused in place. Updating t
 This first app does not install macFUSE, provision SSH credentials or package the
 experimental SSHFS dependencies. These prerequisites still follow the
 [setup guide](prototype.md). A new Mac is not yet a zero-setup installation.
-The permanent Finder Favorites entry remains separate work; automatic releases
-must not be confused with completion of that sidebar integration.
+Finder pinning is implemented in the app with a manual fallback; full lifecycle
+consistency across entry points remains [RWS-008](../FEATURES.md#rws-008).
+Transparent execution from Delta/ordinary terminals is not implemented; see
+[the remaining product scope](../FEATURES.md).
 
 ## Developer test builds
 

@@ -1,52 +1,47 @@
 # Roadmap
 
-This roadmap records direction, not delivery dates or claims of available functionality.
+The authoritative gap list is [FEATURES.md](FEATURES.md). It preserves the initial
+product goal, evidence, acceptance criteria and dependencies. This roadmap gives
+an order, not delivery dates or claims of feasibility.
 
-## 1. macOS feasibility prototype — immediate priority
+## 1. Restore the central experience — P0
 
-- Existing SSH host and one remote workspace.
-- Mount, edit, save, and verify remotely.
-- Explicit remote command execution and interactive shell with correct path mapping.
-- Clear diagnostics for unavailable hosts and missing local prerequisites.
-- Validate a remote coding-agent CLI and a second host after the first workflow works.
+1. [RWS-001](FEATURES.md#rws-001): prove an architecture for remote command execution
+   from project context. Explicit wrappers must not silently redefine the goal.
+2. [RWS-004](FEATURES.md#rws-004), [RWS-005](FEATURES.md#rws-005),
+   [RWS-007](FEATURES.md#rws-007): exact context, no silent local fallback, and
+   executable acceptance tests are prerequisites to declaring transparency.
+3. [RWS-002](FEATURES.md#rws-002): Delta without special agent instructions, if
+   technically feasible. Test internal/noninteractive command paths separately.
+4. [RWS-003](FEATURES.md#rws-003): terminal opened in a mount and `cd` into a mount
+   enter the correct remote environment. A shell integration alone does not close RWS-002.
+5. [RWS-006](FEATURES.md#rws-006): arbitrary remotely installed agents and tools
+   work through those paths without a maintained executable whitelist.
 
-## 2. Usable CLI and stronger reliability
+If technical evidence rules out full transparency, document exact boundaries and
+obtain a product decision. Do not relabel the explicit prototype as complete.
 
-- Host/workspace configuration and lifecycle management.
-- Automated checks for path mapping, execution, and failure behavior.
-- Document measured mount, cache, and disconnection limitations.
-- Add forwarding, refresh, and transfers incrementally as justified by actual use.
-- Reproducible contributor setup, CI, and release documentation.
+## 2. Reliable everyday macOS use — P1
 
-## 3. Persistent remote sessions
+- [RWS-008](FEATURES.md#rws-008): consistent mount/sidebar lifecycle.
+- [RWS-009](FEATURES.md#rws-009) and [RWS-010](FEATURES.md#rws-010): fresh-Mac setup
+  and management of multiple workspaces/hosts.
+- [RWS-011](FEATURES.md#rws-011): complete app acceptance, beyond helper tests.
+- [RWS-012](FEATURES.md#rws-012) and [RWS-013](FEATURES.md#rws-013): failures,
+  recovery and editor saves, tested with disposable data.
+- [RWS-014](FEATURES.md#rws-014) and [RWS-015](FEATURES.md#rws-015): signed release,
+  real updates and a stable installed app. The native macOS app and local build
+  replacement already exist; production delivery is not yet operational.
+- [RWS-020](FEATURES.md#rws-020): keep scope, evidence and distribution documents aligned.
 
-- Choose a session mechanism after prototype feedback.
-- Keep commands and agents running through client disconnections.
-- Reattach from another authorized device.
-- Make any remote component installation explicit.
+## 3. Previously recorded future direction — P2
 
-## 4. Graphical desktop application
+- [RWS-016](FEATURES.md#rws-016): persistent remote sessions and cross-device reattachment.
+- [RWS-017](FEATURES.md#rws-017): iOS files/commands/agents without an awake Mac relay.
+- [RWS-018](FEATURES.md#rws-018): wider desktop and filesystem compatibility.
+- [RWS-019](FEATURES.md#rws-019): clarify advanced port/transfer/watch/cache needs
+  before choosing mechanisms or expanding scope.
 
-- macOS first, using the established core.
-- Windows and Linux later, with platform-specific integrations.
-
-## 5. iOS application
-
-- Independent access to remote hosts, with no Mac relay required.
-- Browse and transfer remote files.
-- Launch, monitor, and reattach to persistent remote commands and coding-agent sessions.
-- Define mobile file caching, authentication, and integration behavior separately.
-
-Stages 4 and 5 remain future work. Their requirements inform core boundaries without delaying the first prototype.
-
-## Next acceptance steps after the first Finder corrections
-
-In priority order, using disposable data and recording results in `docs/validation.md`:
-
-1. **Editor save workflow:** open a file through the mount in a local editor, change/save/reopen it, and compare remote bytes. Include Unicode names, replacement saves, and error reporting. Finder folder creation and copy/paste are verified; this editor workflow is not.
-2. **Mount and Finder lifecycle:** repeat mount/browse/write/unmount cycles, verify process cleanup, and investigate stable sidebar identity. Add observed failures to the live acceptance checks. Resolve/document the outstanding diagnostic OS processes before broader fault testing.
-3. **Controlled failure behavior:** on a dedicated remote test directory, test interrupted connections/writes and recovery. Measure delays and surface errors; do not perform these tests on valuable Documents data.
-4. **Remote development workflow:** validate a coding-agent CLI already installed/authenticated on the remote host, working-directory mapping, PTY resize and Ctrl+C. Then test a second host and a fresh Mac using the repository skill.
-5. **Contributor readiness:** persistent toolchain/setup instructions, reviewed anonymized README screenshots, license selection and release prerequisites. Existing macOS/Linux CI covers the Rust suite, not live macFUSE/Finder acceptance.
-
-Desktop and iOS remain deferred until this core workflow and its failure behavior are dependable. These steps do not authorize future package installation, account authentication, fault injection, or application-framework choices by themselves.
+These items do not authorize package installation, credential changes, destructive
+failure tests or a remote service deployment. Existing results and limitations
+remain recorded in [docs/validation.md](docs/validation.md).

@@ -4,6 +4,15 @@ RWS aims to make remote development workspaces accessible from macOS while keepi
 
 **Status: early Rust CLI prototype. Remote execution and a real FSKit mount/read/write/rename/unmount cycle have passed on a tested Mac and Linux SSH host. FSKit currently requires the experimental SSHFS build described below; broad editor and recovery validation remains pending.**
 
+## Product scope and missing features
+
+The central goal is transparent remote execution when working in a mounted remote
+project, including Delta without special agent instructions where technically
+feasible. **That goal is not implemented yet.** Mounting files, explicit SSH
+launchers and Delta routing rules are partial solutions, not equivalent coverage.
+See the [linked feature backlog and acceptance criteria](FEATURES.md) and
+[delivery order](ROADMAP.md).
+
 ## Try it
 
 See the [prototype guide](docs/prototype.md) for build commands, workspace registration, remote execution, mounting prerequisites, and current limitations.
