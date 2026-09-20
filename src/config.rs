@@ -56,10 +56,19 @@ impl Config {
             return Err("unsupported config version".into());
         }
         config.mount.validate()?;
+        // Loading must never resolve mount roots: canonicalizing a path under
+        // a stalled SSHFS volume blocks in the kernel, which would hang every
+        // command reading the configuration. Registration performs the
+        // canonical alias check; loading only re-checks what is stored.
         for (i, w) in config.workspaces.iter().enumerate() {
             w.validate()?;
             for other in &config.workspaces[..i] {
-                check_pair(w, other)?;
+                if w.name == other.name
+                    || w.mount_root.starts_with(&other.mount_root)
+                    || other.mount_root.starts_with(&w.mount_root)
+                {
+                    return Err("workspace name already exists or mount roots overlap".into());
+                }
             }
         }
         Ok(config)
