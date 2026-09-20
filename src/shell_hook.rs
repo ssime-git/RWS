@@ -105,10 +105,7 @@ pub fn install(zshrc: &Path, rws: &Path, config: Option<&Path>) -> Result<String
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("read {}: {e}", zshrc.display())),
     };
-    let mut kept: Vec<&str> = existing
-        .lines()
-        .filter(|l| !l.contains(MARKER))
-        .collect();
+    let mut kept: Vec<&str> = existing.lines().filter(|l| !l.contains(MARKER)).collect();
     while kept.last().is_some_and(|l| l.is_empty()) {
         kept.pop();
     }
@@ -146,7 +143,12 @@ mod tests {
             Some(Path::new("/cfg/o'brien.json")),
         )
         .unwrap();
-        assert!(line.contains(r#"eval "$('/opt/my tools/rws' --config '/cfg/o'\''brien.json' hook zsh)""#), "{line}");
+        assert!(
+            line.contains(
+                r#"eval "$('/opt/my tools/rws' --config '/cfg/o'\''brien.json' hook zsh)""#
+            ),
+            "{line}"
+        );
         assert!(line.contains(MARKER));
         let bare = install_line(Path::new("/opt/rws"), None).unwrap();
         assert!(!bare.contains("--config"));

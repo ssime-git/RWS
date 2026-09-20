@@ -101,7 +101,11 @@ fn entering_a_remote_directory_switches_into_rws_shell_once() {
     );
     let out = run_zsh(&snippet, temp.path(), &body);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     // One switch on entry; suppressed while staying inside the same volume.
     assert_eq!(stdout.matches("SHELL-ENTERED").count(), 1, "{stdout}");
     let log = calls(temp.path());
@@ -186,7 +190,10 @@ fn sourcing_the_snippet_inside_a_volume_switches_immediately() {
     let bin = write_fake_rws(temp.path(), r#"{"mode":"remote","workspace":"demo"}"#, 0);
     let snippet = rws::shell_hook::zsh_snippet(&bin, None).unwrap();
     // No manual _rws_auto_shell call: sourcing alone must detect the volume.
-    let script = format!("emulate -L zsh\ncd '{v}'\n{snippet}\n", v = volume.display());
+    let script = format!(
+        "emulate -L zsh\ncd '{v}'\n{snippet}\n",
+        v = volume.display()
+    );
     let out = std::process::Command::new("zsh")
         .args(["-f", "-c", &script])
         .env("RWS_AUTO_PREFIX", temp.path())
@@ -223,7 +230,10 @@ fn rws_config_environment_variable_is_forwarded_to_context_and_shell() {
         String::from_utf8_lossy(&out.stderr)
     );
     let log = calls(temp.path());
-    assert!(log.contains("--config /tmp/custom.json context --cwd"), "{log}");
+    assert!(
+        log.contains("--config /tmp/custom.json context --cwd"),
+        "{log}"
+    );
     assert!(log.contains("--config /tmp/custom.json shell"), "{log}");
 }
 
