@@ -34,9 +34,15 @@ For a local developer build with Rust and Swift installed:
 scripts/build-macos-app.sh development
 ```
 
-The script creates `dist/development/RWS.app` and a development ZIP. It refuses
-to overwrite an existing output directory. Move an old build aside before
-rebuilding. The CLI and Sparkle framework are bundled; personal configuration,
+The script creates `dist/development/RWS.app` and a development ZIP. Rebuilding
+uses a temporary staging directory, then replaces that same canonical app only
+after compilation, packaging and signing succeed. The previous app is preserved
+in `dist/archives/` as a ZIP, so it cannot appear as another launchable app.
+Quit the canonical app before rebuilding; the script refuses to replace a running
+bundle. Failed publication restores the previous build. Open the canonical path
+with `open dist/development/RWS.app` to avoid selecting unrelated old copies.
+Each bundle records its short Git revision in `RWSBuildRevision` (with `-dirty`
+for tracked local changes), while release version numbers remain unchanged. The CLI and Sparkle framework are bundled; personal configuration,
 mount receipts, SSH keys and diagnostics are not.
 
 Initial packaging targets Apple silicon, macOS 13+. This deployment target is
@@ -146,7 +152,7 @@ site; RWS does not silently install packages or change system extensions.
 
 Ajouter now saves, connects and pins the workspace under Finder Favourites. Opening
 an existing workspace also refreshes its favorite. Pin failures are reported without
-hiding a successful mount. Disconnect does not delete the favorite or remote data.
+hiding a successful mount. Disconnect removes the managed favorite after successful unmount; remote data is unchanged.
 See [Finder behavior and limits](finder-macos.md).
 
 ### Launch a remote agent

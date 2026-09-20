@@ -2,9 +2,11 @@
 """Version and update metadata shared by local bundles and release CI."""
 import argparse
 import base64
+from datetime import datetime, timezone
 from pathlib import Path
 import plistlib
 import re
+import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 FEED = 'https://github.com/ssime-git/RWS/releases/latest/download/appcast.xml'
@@ -31,7 +33,16 @@ def validate_tag(tag, version):
         raise ValueError('Release tag must exactly match v' + version)
 
 
-def bundle_info(version, production, public_key):
+def git_revision():
+    try:
+        revision = subprocess.check_output(['git', 'rev-parse', '--short=12', 'HEAD'], cwd=ROOT, text=True).strip()
+        dirty = subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=ROOT, text=True)
+        return revision + ('-dirty' if dirty else '')
+    except (OSError, subprocess.CalledProcessError):
+        return 'unknown'
+
+
+def bundle_info(version, production, public_key, revision='unknown'):
     validate_version(version)
     info = {
         'CFBundleIdentifier': 'io.github.ssime-git.RWS',
@@ -40,6 +51,8 @@ def bundle_info(version, production, public_key):
         'CFBundleVersion': version, 'CFBundleShortVersionString': version,
         'LSMinimumSystemVersion': '13.0', 'NSPrincipalClass': 'NSApplication',
         'NSHighResolutionCapable': True, 'RWSUpdatesEnabled': production,
+        'RWSBuildRevision': revision,
+        'RWSBuildTimestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     }
     if production:
         try:
@@ -66,6 +79,6 @@ if __name__ == '__main__':
     if args.tag is not None:
         validate_tag(args.tag, version)
     if args.output:
-        args.output.write_bytes(plistlib.dumps(bundle_info(version, args.production, args.public_key)))
+        args.output.write_bytes(plistlib.dumps(bundle_info(version, args.production, args.public_key, git_revision())))
     else:
         print(version)

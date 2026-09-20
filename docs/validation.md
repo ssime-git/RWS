@@ -296,3 +296,28 @@ execution, or the complete graphical button flow. No paid model request was sent
 Independent agents launched from a Mac IDE remain local unless explicitly configured
 for remote execution. The app's terminal window is local; the launched agent is on
 the configured SSH host. No automatic local fallback is implemented.
+
+## Stability correction — stale bookmarks and build replacement, 2026-09-20
+
+The earlier sidebar claim was insufficient: the user reproduced an unresolved
+favorite after remount. Read-only inspection confirmed an unresolved RWS bookmark.
+A regression that replaces a folder at the same path failed against the previous
+implementation with two entries, then passed with explicit removal/recreation.
+Each new entry carries its managed mount path; disconnect removes it even after
+unmount. Legacy unresolved entries are migrated by the current RWS volume's exact
+name, captured before disconnect when needed.
+
+The live Documents workspace was connected, pinned, disconnected, unpinned,
+reconnected and pinned again by the same CLI/helper paths used by the app. Status
+confirmed a verified RWS mount. Swift tests: 26 executed, 25 passed, 1 optional
+pin-only test skipped. No remote files were deleted. At this point the Mac was
+locked: the final post-remount Finder click must still be performed, so this is
+not yet a graphical end-to-end acceptance claim.
+
+Builds now stage and validate before replacing the canonical app. The previous
+bundle becomes a ZIP archive, no launchable backup is left, running bundles are
+not replaced, and failures preserve the existing build. 17 release tests cover
+publication rollback, refusal cases, metadata and production settings. The app
+shows revision and UTC build timestamp. Historical executable backups from this
+session were converted to verified ZIPs. Production signing/notarization remains
+unavailable without an Apple Developer account.

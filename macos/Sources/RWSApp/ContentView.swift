@@ -72,6 +72,11 @@ struct ContentView: View {
 
     private var startupStatus: some View {
         VStack(alignment: .leading, spacing: 8) {
+            Text("RWS \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev") · build \(Bundle.main.object(forInfoDictionaryKey: "RWSBuildRevision") as? String ?? "inconnu")")
+                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            if let built = Bundle.main.object(forInfoDictionaryKey: "RWSBuildTimestamp") as? String {
+                Text("Construit le \(built)").font(.caption2).foregroundStyle(.secondary)
+            }
             Text(model.startupMessage).foregroundStyle(.secondary)
             ForEach(model.configurationCandidates, id: \.path) { source in
                 Button(source.path) { Task { await model.importConfiguration(source) } }

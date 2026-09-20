@@ -35,6 +35,22 @@ enum FinderSidebar {
         return (url as URL).standardizedFileURL.path
     }
 
+    private static let managedPathKey = "io.github.ssime-git.RWS.mountPath" as CFString
+
+    private static func matches(_ item: LSSharedFileListItem, folder: URL, legacyVolumeName: String? = nil) -> Bool {
+        let target = folder.standardizedFileURL.path
+        if let managed = LSSharedFileListItemCopyProperty(item, managedPathKey)?.takeRetainedValue() as? String,
+           managed == target { return true }
+        let resolved = path(item)
+        if resolved == target { return true }
+        // One-time migration of unresolved favourites made by earlier RWS builds.
+        // Only the current RWS volume's exact system name qualifies, never a prefix.
+        if resolved == nil, let name = legacyVolumeName, name.hasPrefix("RWS-") {
+            return LSSharedFileListItemCopyDisplayName(item).takeRetainedValue() as String == name
+        }
+        return false
+    }
+
     static func paths() throws -> [String] { try entries(list()).compactMap(path) }
 
     static func pin(_ folder: URL) throws {
@@ -44,15 +60,21 @@ enum FinderSidebar {
         }
         let list = try list()
         let target = folder.standardizedFileURL.path
-        // Insertion refreshes an existing URL as well as adding a new one.
+        let volumeName = folder.path.hasPrefix("/Volumes/RWS-")
+            ? try folder.resourceValues(forKeys: [.volumeNameKey]).volumeName : nil
+        // A bookmark follows a filesystem identity, not just a path. Reusing its
+        // entry can preserve the old FSKit mount even when the URL looks correct.
+        for item in try entries(list) where matches(item, folder: folder, legacyVolumeName: volumeName) {
+            guard LSSharedFileListItemRemove(list, item) == noErr else { throw Failure.notSaved }
+        }
         guard RWSInsertSidebarURL(list, folder as CFURL),
               try entries(list).contains(where: { path($0) == target }) else { throw Failure.notSaved }
     }
 
-    // Used for cleanup of the disposable acceptance-test favorite only.
-    static func remove(_ folder: URL) throws {
+    // Remove only this mount's managed entry, including after its volume disappears.
+    static func remove(_ folder: URL, legacyVolumeName: String? = nil) throws {
         let list = try list()
-        for item in try entries(list) where path(item) == folder.standardizedFileURL.path {
+        for item in try entries(list) where matches(item, folder: folder, legacyVolumeName: legacyVolumeName) {
             guard LSSharedFileListItemRemove(list, item) == noErr else { throw Failure.notSaved }
         }
     }

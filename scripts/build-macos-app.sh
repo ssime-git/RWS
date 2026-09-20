@@ -9,8 +9,11 @@ mode=${1:-development}
 export MACOSX_DEPLOYMENT_TARGET=13.0
 version=$(python3 scripts/macos_metadata.py)
 output="$repo_root/dist/$mode"
-app="$output/RWS.app"
-[[ ! -e "$output" ]] || { echo "Output exists: $output. Move it aside before building." >&2; exit 1; }
+python3 scripts/publish-macos-build.py --check-running "$output/RWS.app"
+mkdir -p "$repo_root/dist"
+stage=$(mktemp -d "$repo_root/dist/.build-$mode-XXXXXXXX")
+trap 'rm -rf -- "$stage"' EXIT
+app="$stage/RWS.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/bin" "$app/Contents/Frameworks"
 metadata_args=(--output "$app/Contents/Info.plist")
 if [[ "$mode" == production ]]; then
@@ -36,6 +39,7 @@ if ! otool -l "$app/Contents/MacOS/RWSApp" | grep -q '@executable_path/../Framew
 fi
 if [[ "$mode" == development ]]; then
   codesign --force --deep --sign - "$app"
-  ditto -c -k --sequesterRsrc --keepParent "$app" "$output/RWS-$version-arm64-development.zip"
+  ditto -c -k --sequesterRsrc --keepParent "$app" "$stage/RWS-$version-arm64-development.zip"
 fi
-printf 'Built %s\n' "$app"
+python3 scripts/publish-macos-build.py --stage "$stage" --output "$output"
+printf 'Built %s\n' "$output/RWS.app"

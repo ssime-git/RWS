@@ -14,8 +14,15 @@ This uses Apple's deprecated shared-file-list API, isolated behind a small nativ
 bridge, with read-back verification. Repeated pinning of the same mounted URL was
 verified to create only one favorite. Other favorites are preserved. An existing
 entry under Locations may still be visible as well; RWS does not remove it.
-Disconnect unmounts the filesystem and leaves Finder to manage the offline entry.
-A complete disconnect/remount acceptance cycle remains unverified.
+Disconnect removes the managed favorite after successfully unmounting. Reconnect
+removes the prior bookmark and creates a fresh one: re-inserting a URL alone is
+insufficient when FSKit changes the volume identity. A managed-path property
+identifies RWS entries even after their volume disappears. Earlier unresolved
+favorites are migrated only when their exact display name matches the current RWS
+volume name. Other favorites are not removed.
+
+The live CLI/helper disconnect/remount cycle passes; Finder click acceptance after
+that cycle still requires an unlocked user session. See the current validation log.
 
 ## Manual fallback: show the mounted volume in the left sidebar
 

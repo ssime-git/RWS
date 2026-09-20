@@ -1,4 +1,9 @@
 import importlib.util
+from datetime import datetime, timezone
+import plistlib
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 import unittest
 
@@ -8,6 +13,24 @@ metadata = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(metadata)
 
 class MetadataTests(unittest.TestCase):
+    def test_emitted_bundle_has_utc_build_timestamp(self):
+        before = datetime.now(timezone.utc).replace(microsecond=0)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'Info.plist'
+            subprocess.run([sys.executable, str(MODULE), '--output', str(output)], check=True)
+            info = plistlib.loads(output.read_bytes())
+        self.assertIn('RWSBuildTimestamp', info)
+        value = info['RWSBuildTimestamp']
+        self.assertRegex(value, r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$')
+        timestamp = datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+        self.assertGreaterEqual(timestamp, before)
+        self.assertLessEqual(timestamp, datetime.now(timezone.utc))
+
+    def test_build_revision_is_separate_from_release_version(self):
+        info = metadata.bundle_info('0.1.0', False, '', revision='abcdef012345-dirty')
+        self.assertEqual(info['RWSBuildRevision'], 'abcdef012345-dirty')
+        self.assertEqual(info['CFBundleVersion'], '0.1.0')
+
     def test_development_has_no_update_source(self):
         info = metadata.bundle_info('0.1.0', False, '')
         self.assertFalse(info['RWSUpdatesEnabled'])

@@ -202,8 +202,16 @@ final class AppModel: ObservableObject {
     }
 
     func disconnectSelected() async {
-        guard let selectedWorkspace else { return }
-        await perform(.disconnect(config: configurationURL, workspace: selectedWorkspace))
+        guard let selectedWorkspace,
+              let workspace = configuration.workspaces.first(where: { $0.name == selectedWorkspace }) else { return }
+        let folder = URL(fileURLWithPath: workspace.mountRoot, isDirectory: true)
+        let legacyName = folder.path.hasPrefix("/Volumes/RWS-")
+            ? (try? folder.resourceValues(forKeys: [.volumeNameKey]))?.volumeName : nil
+        if await perform(.disconnect(config: configurationURL, workspace: selectedWorkspace), refreshAfter: false) {
+            do { try FinderSidebar.remove(folder, legacyVolumeName: legacyName) }
+            catch { alertMessage = "Dossier déconnecté, mais le raccourci Finder n’a pas pu être retiré : \(error.localizedDescription)" }
+        }
+        await refreshStatus()
     }
 
     func launchAgent(_ executable: String) async {
