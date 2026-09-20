@@ -152,32 +152,34 @@ uninstall the app respects — no startup path may recreate it. Removing the
 opt-out that survives reinstallation. Both writers only ever replace their own
 marked region and back up or preserve surrounding content.
 
-## 6. Target architecture — not implemented
+## 6. Architecture decision: per-path integration, no universal interception
 
-```mermaid
-flowchart LR
-    Context["Enter remote project in Delta or terminal"]
-    Decide["Execution-context integration — feasibility to establish"]
-    Remote["Commands on owning VM / matching directory"]
-    Failure["Explicit stop on remote failure"]
-    Context -.-> Decide
-    Decide -.-> Remote
-    Decide -.-> Failure
-```
+Decided 2026-09-20 after measuring each command-creation path (issues
+[#1](https://github.com/ssime-git/RWS/issues/1),
+[#2](https://github.com/ssime-git/RWS/issues/2),
+[#3](https://github.com/ssime-git/RWS/issues/3); evidence in the
+[validation journal](validation.md)): no single macOS mechanism intercepts
+every process creation — macFUSE forwards file operations only, a daemon
+cannot take over a terminal's TTY, Endpoint Security can block but not
+relocate an exec, and a noninteractive `/bin/sh` reads no startup files.
+The product therefore integrates **each path with the mechanism that path
+actually offers**, and any path with no mechanism gets an explicit,
+documented decision instead of a silent scope reduction.
 
-Dashed arrows are the **desired product**, not a shipped redirection mechanism.
-The integration must cover each actual command-creation path and distinguish
-local UI processes from project execution. A zsh hook alone cannot establish
-coverage of an IDE's noninteractive or native subprocesses.
+| Command-creation path | Mechanism | Status |
+| --- | --- | --- |
+| Interactive zsh terminal (any emulator), `cd` or opened in the mount | chpwd/startup hook → `rws context` → `[Y/n]` prompt, per-shell memory → `rws shell` | Covered, prompt-based (measured; #3 closed) |
+| Delta integrated interactive terminals | Same hook — Delta starts the login zsh | Covered without agent cooperation (measured) |
+| Delta agent command tool (noninteractive `/bin/sh -c`) | No external interception point exists | Feasibility decision: instruction rules (`rws delta-rules`) remain the mechanism; `RWS_AUTO_MODE` is the env contract (#2 closed) |
+| App agent launcher | Explicit `rws agent` over SSH (VM) or local run in the mount, both exporting `RWS_AUTO_MODE` | Covered, explicit choice |
+| Scripts, IDE-internal/native subprocesses, non-zsh shells | Deliberately untouched: no TTY → no prompt, no switch | Out of scope by design; explicit RWS commands apply |
+| Delta worktree preparation, direnv, native Git operations | Delta-internal, before any RWS entry point | Not interceptable; documented limit |
 
-- [Architecture feasibility #1](https://github.com/ssime-git/RWS/issues/1).
-- [Delta without special instructions #2](https://github.com/ssime-git/RWS/issues/2).
-- [Automatic terminal context #3](https://github.com/ssime-git/RWS/issues/3).
-- [Exact path/worktree context #4](https://github.com/ssime-git/RWS/issues/4).
-- [No accidental local fallback #5](https://github.com/ssime-git/RWS/issues/5).
-
-A limitation must be demonstrated and brought back as a product decision. The
-explicit launchers cannot be silently substituted for this goal.
+Remote failure on any covered path stops with a visible error; no local
+executable of the same name runs instead
+([#5](https://github.com/ssime-git/RWS/issues/5)). Exact-path/worktree
+acceptance across multiple hosts remains tracked in
+[#4](https://github.com/ssime-git/RWS/issues/4).
 
 ## 7. Evidence and limitations
 

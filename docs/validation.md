@@ -408,3 +408,27 @@ screenshots retained.
 Not covered: Delta worktrees pointing at Mac-absolute Git metadata
 (`--git-context` documented, not re-exercised here), and multi-workspace
 switching during one thread.
+
+## No-accidental-local-fallback acceptance — 2026-09-20, 18:40 local
+
+Executed against the real razer-documents workspace with the bundled CLI:
+
+- **Agent absent on the VM, local same-named witness on PATH:** `rws agent
+  -- definitely-absent-xyz` exited 127 with the remote shell's "not found";
+  the local witness executable never ran (no proof file written).
+- **SSH interruption:** SIGINT during `rws exec -- sleep 20` ended with
+  exit 255; nothing continued locally.
+- **Unregistered RWS volume:** `exec --cwd /Volumes/RWS-missing-test`
+  exited 1 with "unregistered RWS volume … no local fallback".
+- **Directory outside every workspace:** `exec --cwd /tmp` exited 1 with
+  "refusing local fallback".
+- **VM unreachable during an agent turn:** recorded above (Delta execution
+  paths acceptance): the agent reported the failure and stopped.
+- **Terminal hook without a TTY:** stays silent and local by design; a `n`
+  answer is an explicit user choice, not an accidental fallback.
+
+Limit: a refused authentication was not simulated separately; SSH runs with
+BatchMode where applicable and any interactive prompt therefore fails into
+the same visible-error path as an unreachable host. Section 6 of the
+architecture document now records the per-path integration decision this
+evidence supports.
