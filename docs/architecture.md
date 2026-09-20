@@ -88,7 +88,7 @@ fallback is documented. The CLI alone does not manage Finder favorites.
 | `rws exec --cwd … --git-context -- …` | Verified path and Git mapping → SSH | Corresponding remote directory |
 | `rws shell` | SSH PTY → remote login shell | Mapped current directory, or explicit workspace root |
 | Current Delta rules | Agent instructed to invoke RWS explicitly | Mapped checkout; native Delta processes remain local |
-| Interactive zsh with `eval "$(rws hook zsh)"` | `cd` into verified mount → `rws context` check → `rws shell` over SSH | Mapped remote directory |
+| Interactive zsh with `eval "$(rws hook zsh)"` | `cd` into verified mount → `rws context` check → `[Y/n]` prompt (answer kept per shell) → `rws shell` over SSH | Mapped remote directory |
 | Ordinary terminal without the hook `cd /Volumes/RWS-demo` | No RWS execution integration | Local shell in a remotely backed filesystem |
 
 `rws agent` loads the remote login environment before changing to the remote

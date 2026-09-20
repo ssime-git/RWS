@@ -49,6 +49,28 @@ _rws_auto_shell() {{
     return 0
   fi
   [[ $context == *'"mode":"remote"'* ]] || return 0
+  local ws=${{context#*\"workspace\":\"}}
+  ws=${{ws%%\"*}}
+  local host=${{context#*\"host\":\"}}
+  host=${{host%%\"*}}
+  typeset -gA _RWS_AUTO_CHOICE
+  local choice=${{RWS_AUTO_MODE-}}
+  [[ -z $choice ]] && choice=${{_RWS_AUTO_CHOICE[$ws]-}}
+  if [[ -z $choice ]]; then
+    # No controlling terminal (script, IDE subprocess): never prompt or switch.
+    if ! {{ : < /dev/tty; }} 2>/dev/null; then
+      return 0
+    fi
+    local reply=''
+    IFS= read -r -k 1 "reply?RWS: switch to $host ($ws)? [Y/n] " < /dev/tty || return 0
+    [[ $reply == $'\n' ]] || print -u2 ''
+    case $reply in
+      ($'\n'|y|Y|o|O) choice=remote ;;
+      (*) choice=local ;;
+    esac
+    _RWS_AUTO_CHOICE[$ws]=$choice
+  fi
+  [[ $choice == remote ]] || return 0
   "${{rws_cmd[@]}}" shell
   _RWS_AUTO_SUPPRESS=$volume
 }}
@@ -167,6 +189,11 @@ mod tests {
         // Opt-out and re-entry guard are part of the contract.
         assert!(snippet.contains("RWS_NO_AUTO_SHELL"));
         assert!(snippet.contains("_RWS_AUTO_SUPPRESS"));
+        // Per-shell mode choice: prompt with remote default, forced mode,
+        // per-workspace memory.
+        assert!(snippet.contains("[Y/n]"));
+        assert!(snippet.contains("RWS_AUTO_MODE"));
+        assert!(snippet.contains("_RWS_AUTO_CHOICE"));
     }
 
     #[test]

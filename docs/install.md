@@ -116,8 +116,9 @@ mounted directory; it does not reconnect an offline workspace when clicked.
 Once a configuration is active, the app also installs the
 [zsh terminal integration](prototype.md#automatic-terminal-switch-zsh)
 automatically: in every **new** interactive zsh, `cd` into a connected
-workspace opens the remote shell on the matching remote directory, and `exit`
-returns to the local shell. Terminals already open before installation need one
+workspace asks `RWS: switch to <host>? [Y/n]` once per shell — Enter opens the
+remote shell on the matching remote directory, `n` stays local, and the answer
+is remembered for that shell. `exit` returns to the local shell. Terminals already open before installation need one
 `source ~/.zshrc`. The integration is one marked line in `~/.zshrc`; remove
 that line or set `RWS_NO_AUTO_SHELL=1` to opt out, and set the
 `installShellHook` app preference to `false` to stop automatic installation.

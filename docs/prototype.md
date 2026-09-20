@@ -54,9 +54,13 @@ automatically for its active configuration and bundled CLI, so app users get
 the integration without any manual command.
 
 With the hook installed, `cd` into a verified mount (or opening a terminal
-there) switches the interactive zsh into `rws shell` on the mapped remote
-directory. Leaving that remote shell returns to the local zsh; RWS does not
-switch again until you leave the volume and re-enter it. Details:
+there, in any emulator) asks once per shell:
+`RWS: switch to <host> (<workspace>)? [Y/n]`. Enter or `y`/`o` opens
+`rws shell` on the mapped remote directory; `n` keeps the shell local. The
+answer is remembered per workspace for that shell's lifetime: re-entering the
+volume reapplies it without asking, and a new terminal asks again. Leaving the
+remote shell with `exit` returns to the local zsh; RWS does not switch again
+until you leave the volume and re-enter it. Details:
 
 - Detection calls `rws context --cwd`, so only registered workspaces with a
   verified mount identity switch; an unregistered `RWS-` volume reports its
@@ -64,6 +68,10 @@ switch again until you leave the volume and re-enter it. Details:
 - Scope is interactive zsh only. Scripts, other shells, IDE-internal and
   noninteractive processes are not covered; broader coverage remains
   [#3](https://github.com/ssime-git/RWS/issues/3).
+- Without an accessible controlling terminal (scripts, IDE-internal
+  subprocesses) nothing prompts and nothing switches.
+- `RWS_AUTO_MODE=remote` or `RWS_AUTO_MODE=local` forces the mode without a
+  prompt — the programmatic surface for agents and automation.
 - `RWS_NO_AUTO_SHELL=1` disables the switch for a shell;
   `RWS_AUTO_PREFIX` overrides the `/Volumes` detection prefix;
   `RWS_CONFIG` points detection and the shell at a non-default
