@@ -1,6 +1,9 @@
 # Fonctionnalités restantes et couverture du besoin RWS
 
-État audité le 20 septembre 2026. Ce fichier est la référence du périmètre restant ;
+État audité le 20 septembre 2026. Le suivi du travail restant se fait dans les
+[issues GitHub](https://github.com/ssime-git/RWS/issues), regroupées dans
+[l’issue de suivi du besoin initial](https://github.com/ssime-git/RWS/issues/1).
+Ce fichier conserve la description auditée du périmètre ;
 [ROADMAP.md](ROADMAP.md) en donne l'ordre de travail et
 [docs/validation.md](docs/validation.md) conserve les preuves et leurs limites.
 Une fonctionnalité implémentée n'est pas considérée comme validée sans test du
@@ -38,29 +41,31 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 
 | ID | Fonctionnalité restante | Priorité | État actuel |
 | --- | --- | --- | --- |
-| [RWS-001](#rws-001) | Architecture de l'exécution transparente par contexte de projet | P0 | Faisabilité à établir |
-| [RWS-002](#rws-002) | Delta distant sans instructions spéciales aux agents | P0 | Absent ; instructions comme solution partielle |
-| [RWS-003](#rws-003) | Terminal ouvert dans un montage, ou `cd` dans celui-ci → VM | P0 | Absent |
-| [RWS-004](#rws-004) | Sous-dossiers, projets, worktrees et métadonnées Git cohérents | P0 | Mapping explicite partiel |
-| [RWS-005](#rws-005) | Échec distant sans poursuite locale silencieuse | P0 | Couvert seulement par les commandes RWS explicites |
-| [RWS-006](#rws-006) | Tout nouvel agent/outillage distant, sans liste codée en dur | P0 | Lanceur générique présent ; parcours transparent absent |
-| [RWS-007](#rws-007) | Preuve du lieu d'exécution dans les parcours réels | P0 | Diagnostics présents ; matrice incomplète |
-| [RWS-008](#rws-008) | Montage, démontage et favoris cohérents entre app et CLI | P1 | App partielle ; CLI sans épinglage |
-| [RWS-009](#rws-009) | Démarrage simple sur un Mac neuf | P1 | Détection présente ; installation/prérequis manuels |
-| [RWS-010](#rws-010) | Gestion complète de plusieurs espaces et hôtes | P1 | Ajout/liste présents ; édition/suppression UI manquantes |
-| [RWS-011](#rws-011) | App et parcours utilisateur validés de bout en bout | P1 | Vérifications fragmentaires et retours utilisateur |
-| [RWS-012](#rws-012) | Reprise fiable après réseau coupé, veille ou processus bloqué | P1 | Non validée globalement ; pas de reconnexion automatique |
-| [RWS-013](#rws-013) | Sauvegardes d'éditeurs et cohérence des fichiers | P1 | Opérations de base validées ; couverture incomplète |
-| [RWS-014](#rws-014) | Releases publiques et mises à jour réellement opérationnelles | P1 | Pipeline présent ; chaîne de production non validée |
-| [RWS-015](#rws-015) | Installation/mise à jour à emplacement stable | P1 | Builds locaux corrigés ; distribution à finaliser |
-| [RWS-016](#rws-016) | Sessions persistantes et reprise multiappareil | P2 | Absent |
-| [RWS-017](#rws-017) | Application iOS indépendante du Mac | P2 | Absent |
-| [RWS-018](#rws-018) | Windows/Linux et compatibilité plus large | P2 | App macOS Apple silicon seulement |
-| [RWS-019](#rws-019) | Capacités avancées : ports, transferts, notifications, cache | P2 | À préciser et prioriser ; absentes du prototype |
-| [RWS-020](#rws-020) | Documentation et préparation de distribution cohérentes | P1 | Dérives documentaires corrigées ici ; suivi permanent |
+| [RWS-001](https://github.com/ssime-git/RWS/issues/1) | Architecture de l'exécution transparente par contexte de projet | P0 | Faisabilité à établir |
+| [RWS-002](https://github.com/ssime-git/RWS/issues/2) | Delta distant sans instructions spéciales aux agents | P0 | Absent ; instructions comme solution partielle |
+| [RWS-003](https://github.com/ssime-git/RWS/issues/3) | Terminal ouvert dans un montage, ou `cd` dans celui-ci → VM | P0 | Absent |
+| [RWS-004](https://github.com/ssime-git/RWS/issues/4) | Sous-dossiers, projets, worktrees et métadonnées Git cohérents | P0 | Mapping explicite partiel |
+| [RWS-005](https://github.com/ssime-git/RWS/issues/5) | Échec distant sans poursuite locale silencieuse | P0 | Couvert seulement par les commandes RWS explicites |
+| [RWS-006](https://github.com/ssime-git/RWS/issues/6) | Tout nouvel agent/outillage distant, sans liste codée en dur | P0 | Lanceur générique présent ; parcours transparent absent |
+| [RWS-007](https://github.com/ssime-git/RWS/issues/7) | Preuve du lieu d'exécution dans les parcours réels | P0 | Diagnostics présents ; matrice incomplète |
+| [RWS-008](https://github.com/ssime-git/RWS/issues/8) | Montage, démontage et favoris cohérents entre app et CLI | P1 | App partielle ; CLI sans épinglage |
+| [RWS-009](https://github.com/ssime-git/RWS/issues/9) | Démarrage simple sur un Mac neuf | P1 | Détection présente ; installation/prérequis manuels |
+| [RWS-010](https://github.com/ssime-git/RWS/issues/10) | Gestion complète de plusieurs espaces et hôtes | P1 | Ajout/liste présents ; édition/suppression UI manquantes |
+| [RWS-011](https://github.com/ssime-git/RWS/issues/11) | App et parcours utilisateur validés de bout en bout | P1 | Vérifications fragmentaires et retours utilisateur |
+| [RWS-012](https://github.com/ssime-git/RWS/issues/12) | Reprise fiable après réseau coupé, veille ou processus bloqué | P1 | Non validée globalement ; pas de reconnexion automatique |
+| [RWS-013](https://github.com/ssime-git/RWS/issues/13) | Sauvegardes d'éditeurs et cohérence des fichiers | P1 | Opérations de base validées ; couverture incomplète |
+| [RWS-014](https://github.com/ssime-git/RWS/issues/14) | Releases publiques et mises à jour réellement opérationnelles | P1 | Pipeline présent ; chaîne de production non validée |
+| [RWS-015](https://github.com/ssime-git/RWS/issues/15) | Installation/mise à jour à emplacement stable | P1 | Builds locaux corrigés ; distribution à finaliser |
+| [RWS-016](https://github.com/ssime-git/RWS/issues/16) | Sessions persistantes et reprise multiappareil | P2 | Absent |
+| [RWS-017](https://github.com/ssime-git/RWS/issues/17) | Application iOS indépendante du Mac | P2 | Absent |
+| [RWS-018](https://github.com/ssime-git/RWS/issues/18) | Windows/Linux et compatibilité plus large | P2 | App macOS Apple silicon seulement |
+| [RWS-019](https://github.com/ssime-git/RWS/issues/19) | Capacités avancées : ports, transferts, notifications, cache | P2 | À préciser et prioriser ; absentes du prototype |
+| [RWS-020](https://github.com/ssime-git/RWS/issues/20) | Documentation et préparation de distribution cohérentes | P1 | Dérives documentaires corrigées ici ; suivi permanent |
 
 <a id="rws-001"></a>
 ## RWS-001 — Établir l'architecture de l'exécution transparente
+
+Issue GitHub : [#1](https://github.com/ssime-git/RWS/issues/1).
 
 - **Manque :** le mécanisme qui déduit la VM du contexte du projet avant le lancement
   d'une commande, sans dépendre du respect d'un prompt par un agent.
@@ -79,6 +84,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 <a id="rws-002"></a>
 ## RWS-002 — Delta sans instructions spéciales
 
+Issue GitHub : [#2](https://github.com/ssime-git/RWS/issues/2).
+
 - **Existant :** [règles personnelles Delta](src/agent_rules.rs),
   [procédure actuelle](docs/connection.md#delta-and-linux-commands) et un diagnostic
   réel réussi ; fonctionnement confirmé par l'utilisateur sur son parcours.
@@ -94,6 +101,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 <a id="rws-003"></a>
 ## RWS-003 — Terminaux et navigation dans un montage
 
+Issue GitHub : [#3](https://github.com/ssime-git/RWS/issues/3).
+
 - **Manque :** ouvrir Ghostty ou un autre terminal dans le montage, ou faire `cd`
   depuis un terminal local vers ce montage, ne déclenche aujourd'hui aucune session distante.
 - **Acceptation :** ces deux entrées, y compris dans un sous-dossier, permettent
@@ -108,6 +117,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 <a id="rws-004"></a>
 ## RWS-004 — Contexte exact et worktrees
 
+Issue GitHub : [#4](https://github.com/ssime-git/RWS/issues/4).
+
 - **Existant :** [résolution des chemins et contexte Git](src/routing.rs), mapping
   explicite des répertoires et certaines métadonnées de worktrees Delta.
 - **Manque :** application de ce contexte dans tous les futurs parcours transparents.
@@ -121,6 +132,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 <a id="rws-005"></a>
 ## RWS-005 — Ne jamais poursuivre localement par accident
 
+Issue GitHub : [#5](https://github.com/ssime-git/RWS/issues/5).
+
 - **Existant :** les [commandes explicites RWS](src/main.rs) remplacent leur processus
   par SSH ; tests de code de sortie et absence de repli local pour le lanceur.
 - **Manque :** cette garantie pour [002](#rws-002) et [003](#rws-003).
@@ -131,6 +144,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 
 <a id="rws-006"></a>
 ## RWS-006 — Agents et outils génériques
+
+Issue GitHub : [#6](https://github.com/ssime-git/RWS/issues/6).
 
 - **Existant :** [lanceur générique](macos/Sources/RWSApp/AgentLauncher.swift), commande
   `rws agent`, chargement du profil distant, versions de plusieurs agents vérifiées.
@@ -147,6 +162,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 <a id="rws-007"></a>
 ## RWS-007 — Preuves et matrice de compatibilité
 
+Issue GitHub : [#7](https://github.com/ssime-git/RWS/issues/7).
+
 - **Manque :** une matrice exécutable reliant chaque promesse à son entrée réelle
   (Delta, terminal contextuel, `cd`, app, CLI), shell, application et système testés.
 - **Acceptation :** observer hôte/OS/cwd/PID/exécutable côté VM et témoins côté Mac ;
@@ -158,6 +175,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 
 <a id="rws-008"></a>
 ## RWS-008 — Cycle de montage et favoris
+
+Issue GitHub : [#8](https://github.com/ssime-git/RWS/issues/8).
 
 - **Existant :** montage vérifié, démontage normal, gestion du favori dans
   [l'app](macos/Sources/RWSApp/AppModel.swift) et
@@ -174,6 +193,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 <a id="rws-009"></a>
 ## RWS-009 — Installation et détection sur un Mac neuf
 
+Issue GitHub : [#9](https://github.com/ssime-git/RWS/issues/9).
+
 - **Existant :** [détection limitée aux emplacements connus](macos/Sources/RWSApp/Startup.swift),
   erreurs de dépendances, [modèle privé](.rws-local.template/README.md).
 - **Manque :** parcours simple pour obtenir le SSHFS compatible, installer/configurer
@@ -186,6 +207,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 <a id="rws-010"></a>
 ## RWS-010 — Gestion réutilisable des espaces et hôtes
 
+Issue GitHub : [#10](https://github.com/ssime-git/RWS/issues/10).
+
 - **Manque :** édition/suppression d'espaces dans l'app, diagnostics simples de
   connexion/authentification, validation sur un deuxième hôte et plusieurs projets.
 - **Acceptation :** ajouter/modifier/retirer un espace sans éditer le JSON ; conserver
@@ -195,6 +218,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 
 <a id="rws-011"></a>
 ## RWS-011 — Parcours app réellement validé
+
+Issue GitHub : [#11](https://github.com/ssime-git/RWS/issues/11).
 
 - **Manque :** validation complète et reproductible de l'interface, et états visibles
   distinguant montage, SSH, lieu d'exécution et erreur. L'outil de contrôle utilisé a
@@ -207,6 +232,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 <a id="rws-012"></a>
 ## RWS-012 — Réseau, veille et récupération
 
+Issue GitHub : [#12](https://github.com/ssime-git/RWS/issues/12).
+
 - **Manque :** validation des interruptions et politique claire de reconnexion,
   traitement des processus bloqués/états périmés et diagnostic après veille.
 - **Acceptation :** essais sur données jetables, délais bornés et erreurs visibles,
@@ -218,6 +245,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 <a id="rws-013"></a>
 ## RWS-013 — Sauvegardes et visibilité des fichiers
 
+Issue GitHub : [#13](https://github.com/ssime-git/RWS/issues/13).
+
 - **Manque :** couverture complète des sauvegardes d'éditeurs, remplacements atomiques,
   changements concurrents/distants et interruptions d'écriture.
 - **Acceptation :** éditer/sauver/rouvrir depuis les applications ciblées, comparer les
@@ -227,6 +256,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 
 <a id="rws-014"></a>
 ## RWS-014 — Releases et mises à jour utilisateurs
+
+Issue GitHub : [#14](https://github.com/ssime-git/RWS/issues/14).
 
 - **Existant :** [CI de release](.github/workflows/release.yml),
   [intégration Sparkle](macos/Sources/RWSApp/UpdateManager.swift).
@@ -242,6 +273,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 <a id="rws-015"></a>
 ## RWS-015 — Une app identifiable, sans anciennes copies concurrentes
 
+Issue GitHub : [#15](https://github.com/ssime-git/RWS/issues/15).
+
 - **Existant :** [build avec remplacement au même chemin](scripts/build-macos-app.sh),
   [publication et rollback](scripts/publish-macos-build.py), anciennes versions en ZIP,
   révision et date de build visibles ; refus de remplacer un bundle en cours d'exécution.
@@ -254,6 +287,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 <a id="rws-016"></a>
 ## RWS-016 — Sessions persistantes (vision différée)
 
+Issue GitHub : [#16](https://github.com/ssime-git/RWS/issues/16).
+
 - **Manque :** agents/commandes survivant à une déconnexion du client et réattachement
   depuis un autre appareil. Une session SSH actuelle n'apporte pas cette garantie.
 - **Acceptation :** choisir le mécanisme distant, reconnecter à la même session après
@@ -264,6 +299,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 <a id="rws-017"></a>
 ## RWS-017 — iOS indépendant (vision différée)
 
+Issue GitHub : [#17](https://github.com/ssime-git/RWS/issues/17).
+
 - **Manque :** application pour fichiers/transferts, commandes et suivi d'agents,
   sans relais nécessitant un Mac allumé.
 - **Acceptation :** connexion directe autorisée à la VM, navigation/transfert et
@@ -273,6 +310,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 <a id="rws-018"></a>
 ## RWS-018 — Plateformes et compatibilité (vision différée)
 
+Issue GitHub : [#18](https://github.com/ssime-git/RWS/issues/18).
+
 - **Manque :** clients Windows/Linux, package macOS Intel et matrice réelle des
   versions de macOS/backends supportés. La cible de compilation n'est pas une preuve FSKit.
 - **Acceptation :** définir puis tester chaque combinaison annoncée sur une machine
@@ -281,6 +320,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 
 <a id="rws-019"></a>
 ## RWS-019 — Capacités avancées à cadrer (vision différée)
+
+Issue GitHub : [#19](https://github.com/ssime-git/RWS/issues/19).
 
 - **Manque :** mécanisme RWS de ports de développement, transferts avancés,
   notifications de changements, cache borné/mode hors ligne et éventuel volume unifié.
@@ -292,6 +333,8 @@ immédiate. « À étudier » n'est ni une promesse de faisabilité ni une fonct
 
 <a id="rws-020"></a>
 ## RWS-020 — Cohérence documentaire et distribution
+
+Issue GitHub : [#20](https://github.com/ssime-git/RWS/issues/20).
 
 - **Manque :** maintien d'une seule définition du périmètre, couverture liée aux tests,
   décision de licence avant présentation comme logiciel open source licencié.

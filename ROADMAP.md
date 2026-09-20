@@ -1,6 +1,8 @@
 # Roadmap
 
-The authoritative gap list is [FEATURES.md](FEATURES.md). It preserves the initial
+Work is tracked in [GitHub issues](https://github.com/ssime-git/RWS/issues),
+with [issue #1](https://github.com/ssime-git/RWS/issues/1) linking the backlog.
+The audited gap list and issue index are in [FEATURES.md](FEATURES.md). It preserves the initial
 product goal, evidence, acceptance criteria and dependencies. This roadmap gives
 an order, not delivery dates or claims of feasibility.
 
