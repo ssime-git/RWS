@@ -378,3 +378,33 @@ Not covered by this entry: interactive Ctrl+C and terminal-resize behavior in
 a human session (informally exercised, not recorded), other shells than zsh,
 IDE-internal and noninteractive processes (issues #1/#2), and terminals opened
 before the integration was installed (one `source ~/.zshrc` required).
+
+## Delta execution paths acceptance — 2026-09-20, 18:10 local
+
+Issue #2's command-creation paths were exercised in the live Delta UI on the
+`test-delta` project inside the mounted workspace, by the user, with
+screenshots retained.
+
+- **Rules enabled (personal AGENT.md block):** an agent-issued
+  `uname -s; hostname; pwd` executed remotely — `Linux / razer /
+  /home/razer/Documents/test-delta` — after the agent's own `rws context`
+  check, per the installed rules.
+- **Rules disabled (AGENT.md renamed, Delta restarted):** the same request
+  executed locally — `Darwin / Mac.lan / /Volumes/RWS-Documents/test-delta`.
+  No hidden native redirection exists; instruction rules are the mechanism
+  for this path, confirming the feasibility decision in
+  docs/connection.md § Native execution limits.
+- **SSH failure (Tailscale cut after the thread was prepared, rules
+  enabled):** `git status` failed with `rws: resolve mount path:
+  Input/output error (os error 5)`; the agent reported the failure and
+  stopped, executing nothing locally. After the link returned, the same
+  request ran remotely again.
+- **Delta worktree preparation is its own local path:** with the link cut
+  before thread preparation, Delta itself failed to create its checkout in
+  the mounted folder (`os error 5`) and one agent turn fell back to a local
+  `/Users/...` cwd — outside RWS's reach, consistent with the documented
+  limits.
+
+Not covered: Delta worktrees pointing at Mac-absolute Git metadata
+(`--git-context` documented, not re-exercised here), and multi-workspace
+switching during one thread.
