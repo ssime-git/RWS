@@ -1,11 +1,13 @@
-# Using the prototype
+# CLI reference and quick start
+
+[Documentation](README.md) · [App user guide](install.md) · [Architecture](architecture.md)
 
 ## Requirements
 
 - macOS for mounting; the Rust core and non-mount CLI tests also target Linux.
 - Rust stable and the macOS Command Line Tools to build. The initial local checks used Rust 1.98.1.
 - Working system `ssh` and `sftp`, with a configured host and a POSIX-compatible remote login shell.
-- For Finder access, install [macFUSE](https://macfuse.github.io/) and its separately distributed [SSHFS package](https://github.com/macfuse/macfuse/wiki/File-Systems-%E2%80%90-SSHFS). RWS does not install or configure system extensions. The appropriate backend must be configured and tested on your Mac.
+- For Finder access, install [macFUSE](https://macfuse.github.io/) and a compatible SSHFS implementation. The currently tested FSKit path requires the [patched RWS SSHFS build](sshfs-fskit.md); a stock SSHFS installation alone does not provide those corrections. RWS does not install or configure system extensions. The appropriate backend must be configured and tested on your Mac.
 
 ## Build and register a workspace
 
@@ -21,7 +23,7 @@ cargo build --locked
 
 Replace the example destination and remote directory with your own. Use an SSH alias for custom ports, IPv6, bastions, identities, and other SSH configuration. RWS never rewrites `~/.ssh/config` or disables host-key checks.
 
-Configuration defaults to `~/Library/Application Support/RWS/config.json` on macOS. Use `--config PATH` for a separate configuration. Writes use a lock and atomic replacement. A stale lock after a crash requires inspection and manual removal. There is no configuration editor or remove command yet; edit the JSON while no RWS registration command is running.
+Configuration defaults to `~/Library/Application Support/RWS/config.json` on macOS. Use `--config PATH` for a separate configuration. Writes use a lock and atomic replacement. A stale lock after a crash requires inspection and manual removal. The app can add workspaces and save mount settings, but has no full workspace editor or remove action yet. For manual JSON edits, stop RWS operations first and preserve existing mount receipts; do not modify an active registration.
 
 ## Execute without mounting
 
@@ -72,7 +74,7 @@ For the left sidebar, follow [Finder configuration and acceptance](finder-macos.
 - `workspace list` and dry runs emit JSON. There is no global `--json` mode yet; command stdout/stderr are streamed unchanged, with execution location on stderr.
 - Local environment forwarding is left to the user's SSH configuration; RWS adds no environment forwarding or credential copying.
 - SSHFS/macFUSE behavior, filesystem latency, interruption handling, and Finder saves still require physical end-to-end validation.
-- Windows and the graphical/mobile applications remain roadmap work.
+- A native macOS app is implemented. Windows and mobile applications remain roadmap work.
 
 ## Manual acceptance check
 

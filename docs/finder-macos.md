@@ -1,6 +1,8 @@
 # macOS Finder setup and acceptance
 
-This procedure records behavior observed on macOS 27.0 build 26A428 with macFUSE 5.4.0 and RWS SSHFS `3.7.5-rws-fskit3`. Labels can differ by macOS version or language. It is not a claim of compatibility with every Mac. Build and mount using [the prototype guide](prototype.md) and [patched SSHFS instructions](sshfs-fskit.md) first.
+[Documentation](README.md) · [App user guide](install.md) · [Architecture](architecture.md)
+
+This procedure records behavior observed on macOS 27.0 build 26A428 with macFUSE 5.4.0 and RWS SSHFS `3.7.5-rws-fskit3`. Labels can differ by macOS version or language. It is not a claim of compatibility with every Mac. Start with the [app user guide](install.md), or the [developer guide](development.md) if building from source.
 
 ## Automatic pinning in the RWS app
 
@@ -46,7 +48,10 @@ The sidebar entry can disappear or remain as a stale shortcut. In the latter cas
 2. If that works but the sidebar entry fails, right-click the stale entry and choose **Remove from Sidebar**. Do not select an eject or delete action.
 3. Add the current volume from Computer using the procedure above, then test clicking it again.
 
-Automatic sidebar persistence remains unresolved. Each observed FSKit mount received a different mount URL identifier; this is evidence to investigate, not proof of the exact Finder bookmarking mechanism.
+For connections made through the app, managed bookmark renewal addresses the tested
+remount case. Arbitrary external/CLI remounts and manually added favorites do not
+receive that lifecycle handling. Each observed FSKit mount had a different mount
+URL identifier; do not assume a path-only favorite will remain valid.
 
 ## Validate real Finder operations
 

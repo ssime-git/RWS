@@ -1,5 +1,9 @@
 # macOS CLI prototype implementation plan
 
+> **Historical plan.** This records the initial CLI iteration, including its then-blocked
+> mount checks. It is not the current installation procedure or feature status.
+> Use [documentation](README.md), [features](../FEATURES.md) and [validation](validation.md).
+
 **Goal:** register a workspace, mount it with SSHFS, and execute a command or shell on its owning SSH host.
 
 **Architecture:** a Rust library holds workspace validation and path mapping; platform adapters build OpenSSH and SSHFS invocations; a small CLI owns configuration and user interaction. No daemon, remote installation, custom filesystem, or mobile code in this iteration.

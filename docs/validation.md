@@ -1,5 +1,24 @@
 # Prototype validation — 2026-09-19
 
+[Documentation](README.md) · [Architecture](architecture.md) · [Feature backlog](../FEATURES.md)
+
+## Reading this journal
+
+This is an append-only development record: earlier failures and test counts describe
+their stage, not necessarily the current build. Later follow-ups supersede them.
+
+As of 20 September 2026, recorded checks cover file operations with patched SSHFS,
+explicit remote execution, a Delta forwarding diagnostic, remote agent process
+startup and Finder favorite clicks after remount. User feedback additionally confirms
+the Delta workflow and app-launched Claude. These are distinct observations, not a
+claim that every app or agent scenario passed end to end.
+
+Clean-Mac setup, full editor-save coverage, network-loss recovery and signed
+release-to-release updates remain unvalidated. Ordinary terminals in a mount
+still execute locally. Follow [installation](install.md) for current instructions.
+
+## Initial filesystem result
+
 Latest result: the [FSKit corrections](sshfs-fskit.md) are implemented and a real RWS file-operation cycle passes using the isolated patched SSHFS build. Earlier failure records below are preserved as diagnostic history; full editor and recovery acceptance remain outstanding.
 
 ## Simplified connection follow-up
@@ -32,7 +51,7 @@ environment were not migrated. See [connection and execution](connection.md).
 This work does not validate editor saves, network-loss recovery or automatic
 Finder sidebar persistence. Mount verification now requires a writable root.
 
-## Current acceptance snapshot
+## Intermediate acceptance snapshot
 
 Global Delta forwarding follow-up: the current suite passes 46 tests locally,
 with formatting and Clippy. Personal rule generation is generic across the
@@ -69,7 +88,7 @@ This table supersedes unresolved statements in the historical investigation sect
 | Second host and fresh physical Mac | Pending |
 | Screenshots | Private originals retained; no sanitized README images published |
 
-See [Finder setup](finder-macos.md) for operational steps and [the roadmap](../ROADMAP.md#next-acceptance-steps-after-the-first-finder-corrections) for the next acceptance work. Setup permissions used during the initial FSKit repair were revoked; later Finder work needed no new privacy grant.
+See [Finder setup](finder-macos.md) for operational steps and [the roadmap](../ROADMAP.md#2-reliable-everyday-macos-use--p1) for the next acceptance work. Setup permissions used during the initial FSKit repair were revoked; later Finder work needed no new privacy grant.
 
 ## Verified locally
 

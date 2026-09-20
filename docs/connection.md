@@ -1,5 +1,7 @@
 # Connect, disconnect and execute on the VM
 
+[Documentation](README.md) · [App user guide](install.md) · [Architecture](architecture.md)
+
 RWS exposes remote files on the Mac. Applications launched on the Mac still
 execute their commands on the Mac unless they explicitly use SSH or RWS.
 
@@ -40,7 +42,8 @@ Double-click `Connect-demo.command`, `Disconnect-demo.command`, or
 The shortcuts contain absolute paths, preserve failures, and wait for Enter when
 run interactively. Generation refuses to overwrite existing files. Keep the CLI
 at its recorded location; regenerate into a new directory after moving it.
-No Finder preferences or sidebar entries are changed automatically.
+These CLI-generated shortcuts do not change Finder preferences or sidebar entries.
+The native app separately attempts to manage its favorite; see [Finder behavior](finder-macos.md).
 
 ## Existing mounts and verification
 

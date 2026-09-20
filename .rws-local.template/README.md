@@ -15,7 +15,7 @@ fi
 
 Edit `.rws-local/config.json`: set the SSH destination, remote directory, mount
 name/path and absolute path of the patched SSHFS executable. FSKit requires a
-direct child of `/Volumes`. Follow [macOS setup](../docs/prototype.md) and the
+direct child of `/Volumes`. Follow [developer setup](../docs/development.md) and the
 [SSHFS build guide](../docs/sshfs-fskit.md) for prerequisites; copying this template
 does not install or activate them. Configure authentication in your own SSH
 configuration, never in this template.

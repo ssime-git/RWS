@@ -1,55 +1,107 @@
-# RWS — Remote Workspace System
+# RWS · Remote Workspace System
 
-RWS aims to make remote development workspaces accessible from macOS while keeping files and command execution on the machine that owns each workspace.
+**Browse remote project files in Finder. Run development tools on their remote host.**
 
-**Status: early Rust CLI prototype. Remote execution and a real FSKit mount/read/write/rename/unmount cycle have passed on a tested Mac and Linux SSH host. FSKit currently requires the experimental SSHFS build described below; broad editor and recovery validation remains pending.**
+RWS combines a native macOS app, a Rust CLI and SSH. Your remote machine remains
+where the files live and where explicitly launched commands execute.
 
-## Product scope and missing features
+[Get started](docs/install.md) · [Build from source](docs/development.md) ·
+[Architecture](docs/architecture.md) · [Documentation](docs/README.md) ·
+[Feature backlog](https://github.com/ssime-git/RWS/issues/1)
 
-The central goal is transparent remote execution when working in a mounted remote
-project, including Delta without special agent instructions where technically
-feasible. **That goal is not implemented yet.** Mounting files, explicit SSH
-launchers and Delta routing rules are partial solutions, not equivalent coverage.
-See the [linked feature backlog and acceptance criteria](FEATURES.md) and
-[delivery order](ROADMAP.md).
+> **Development preview.** The app and CLI work on the tested Mac/SSH setup.
+> There is no published signed release yet. Mounting currently requires macFUSE
+> and an external experimental SSHFS build. Installation on a clean Mac and
+> failure recovery are not fully validated. See [tested scope](docs/validation.md).
 
-## Try it
+## Choose your starting point
 
-See the [prototype guide](docs/prototype.md) for build commands, workspace registration, remote execution, mounting prerequisites, and current limitations.
+| You want to… | Start here |
+| --- | --- |
+| Open an existing `RWS.app` by double-clicking | [App user guide](docs/install.md#1-get-the-app) |
+| Download a development build without compiling RWS | [Build availability](docs/install.md#build-availability) |
+| Compile, test and run the app yourself | [Developer quick start](docs/development.md) |
+| Use only the command line | [CLI guide](docs/prototype.md) |
+| Understand which processes run where | [Conceptual architecture](docs/architecture.md) |
+| Fix a connection, mounting or Finder problem | [Troubleshooting](docs/troubleshooting.md) |
 
-For saved connection settings, double-click shortcuts, mount status, and the
-distinction between remote files and Delta's local commands, see
-[connect and execute on the VM](docs/connection.md).
+## How it works today
 
-Start a new machine's private configuration from
-[`.rws-local.template/`](.rws-local.template/README.md). Adapt the example paths;
-keep the resulting `.rws-local/` directory out of Git.
-
-```sh
-cargo build --locked
-./target/debug/rws --help
+```mermaid
+flowchart LR
+    Finder["Finder / editor on Mac"] -->|"File access"| Mount["macFUSE + SSHFS"]
+    Mount -->|"SFTP"| Files["Project files on VM"]
+    App["RWS app / CLI"] -->|"Explicit remote launch"| SSH["SSH"]
+    SSH --> Agent["Shell / agent / tools on VM"]
 ```
 
-For the native macOS frontend, development builds and signed automatic release
-setup, see [the app and release guide](docs/macos-app.md).
+**Files and execution are separate paths.** macFUSE handles filesystem operations;
+it does not redirect arbitrary Mac processes. A normal terminal opened inside
+`/Volumes/RWS-demo` still runs locally. Use **Lancer sur la VM** in the app, or
+`rws agent`, `rws exec` or `rws shell`, for remote execution today.
 
-## First prototype
+The original product goal is broader: working in a mounted project should run its
+commands on the VM naturally, including Delta without special agent instructions
+where feasible. **That transparent execution is not implemented.** It is tracked
+in [#1](https://github.com/ssime-git/RWS/issues/1),
+[Delta #2](https://github.com/ssime-git/RWS/issues/2) and
+[terminals #3](https://github.com/ssime-git/RWS/issues/3).
 
-Validate one complete workflow: connect to an existing SSH host, mount a remote directory on macOS, edit a file locally, and run a command or interactive shell in the corresponding remote directory.
+## A first session
 
-The remote machine remains the source of truth. The prototype will use existing SSH and filesystem tools before considering a custom filesystem.
+Once the [prerequisites](docs/install.md#2-prepare-the-mac-and-the-remote-host) are ready:
 
-## Project documents
+1. Double-click **RWS.app**. Review the detected configuration and dependency status.
+2. Save the SSHFS path and FSKit setting in **Configuration avancée** on first use,
+   then add an SSH destination and absolute remote folder, or select an existing space.
+3. Click **Ouvrir dans le Finder** to connect and browse. RWS also attempts to pin
+   the volume in Finder; if that fails, it explains the manual fallback.
+4. Enter a remotely installed CLI such as `claude` or `codex`, then choose
+   **Lancer sur la VM**. The terminal shows the remote host, OS and directory.
+5. Close files using the mount and choose **Déconnecter** when finished.
 
-- [Decisions and prototype scope](docs/decisions.md)
-- [Roadmap](ROADMAP.md)
-- [macOS Finder configuration and troubleshooting](docs/finder-macos.md)
-- [Experimental FSKit-compatible SSHFS](docs/sshfs-fskit.md)
-- [Validation results and remaining checks](docs/validation.md)
-- [Agent skill: set up RWS on a new Mac](.agents/skills/rws-macos-setup/SKILL.md)
+No agent whitelist is required: the launcher accepts a remote executable name or
+absolute path. The agent and its authentication must already be set up on the VM.
+An editor extension without a CLI needs its own integration.
 
-## Open-source preparation
+## What is available
 
-The repository is being organized for public development from the start. Documentation and examples must use fictitious hostnames and paths, and must not contain credentials or personal SSH configuration.
+| Available now | Not yet delivered |
+| --- | --- |
+| Native macOS app; register/connect/disconnect spaces | Automatic SSH switch when opening a terminal or using `cd` |
+| Generic remote agent launcher and explicit SSH commands | General redirection of Delta's native processes |
+| Config/dependency discovery and actionable errors | One-step clean-Mac dependency installation |
+| Finder pinning with bookmark renewal and manual fallback | Sessions surviving disconnects and cross-device reattachment |
+| Build CI, local bundle replacement and release pipeline | Signed public release and validated user auto-updates |
 
-A license must be selected before the project is presented as licensed open-source software. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks.
+The existing Delta integration uses personal agent instructions. A tested Delta
+workflow is available in the [Delta guide](docs/connection.md#delta-and-linux-commands);
+it is not equivalent to native remote execution without instructions.
+
+## Build the app
+
+On an Apple silicon Mac with [Rust, Xcode and Python 3 ready](docs/development.md#prerequisites):
+
+```sh
+git clone --branch prototype/cli https://github.com/ssime-git/RWS.git
+cd RWS
+rustup target add aarch64-apple-darwin
+scripts/build-macos-app.sh development
+open dist/development/RWS.app
+```
+
+The builder includes the RWS CLI and Sparkle framework. macFUSE and SSHFS are
+separate prerequisites for mounting. Quit RWS before rebuilding; the previous
+bundle is archived as ZIP and the new build replaces the same path.
+
+## Explore and contribute
+
+- [Documentation map](docs/README.md): user, developer, maintainer and reference guides.
+- [Architecture](docs/architecture.md): components, data flow and trust boundaries.
+- [Features and linked issues](FEATURES.md): gaps, priorities and acceptance criteria.
+- [Roadmap](ROADMAP.md): delivery order, distinct from current capabilities.
+- [Contributing](CONTRIBUTING.md): tests, review expectations and private-data rules.
+
+**License selection is pending.** Source availability is not a declared open-source
+license. No project license is implied; choose and publish one before distributing
+RWS as a licensed open-source release. Third-party components retain their own terms.

@@ -1,27 +1,24 @@
 # RWS macOS app and automatic releases
 
+[Documentation](README.md) · [App user guide](install.md) · [Architecture](architecture.md)
+
 The native app is the graphical frontend for the existing Rust CLI. It stores
 new workspace configuration in `~/Library/Application Support/RWS/`, outside
 the app bundle. Existing detected configurations are reused in place. Updating the app must not replace that directory.
 
 ## User workflow
 
-1. Install RWS in Applications and open it.
-2. On launch RWS detects its existing configuration and checks macFUSE and SSHFS.
-   A single detected configuration is reused automatically; multiple candidates
-   are presented for selection. Missing or incompatible dependencies display an
-   actionable error. On a new setup, add the SSH host, remote directory and a
-   workspace name. SSH authentication and FSKit activation remain prerequisites.
-3. Select the workspace and choose **Open**: RWS connects, verifies the mount and
-   opens Finder. Choose **Disconnect** when finished; busy mounts are preserved.
+Follow [Install and open RWS](install.md) for the complete first-use procedure,
+or [Build from source](development.md) for a developer build. In particular,
+save the compatible SSHFS path and intended FSKit backend **before** adding a
+workspace. Dependency discovery does not silently switch backends.
 
-This first app does not install macFUSE, provision SSH credentials or package the
-experimental SSHFS dependencies. These prerequisites still follow the
-[setup guide](prototype.md). A new Mac is not yet a zero-setup installation.
-Finder pinning is implemented in the app with a manual fallback; full lifecycle
-consistency across entry points remains [RWS-008](../FEATURES.md#rws-008).
+The app does not install macFUSE, provision SSH credentials or bundle the
+experimental SSHFS dependencies. A clean Mac is not yet a zero-setup installation.
+Finder pinning is implemented with a manual fallback; lifecycle consistency
+across entry points remains [RWS-008](../FEATURES.md#rws-008).
 Transparent execution from Delta/ordinary terminals is not implemented; see
-[the remaining product scope](../FEATURES.md).
+[architecture](architecture.md) and [remaining scope](../FEATURES.md).
 
 ## Developer test builds
 

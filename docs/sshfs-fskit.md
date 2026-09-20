@@ -1,5 +1,9 @@
 # Experimental FSKit-compatible SSHFS
 
+[Documentation](README.md) · [Installation](install.md) · [Developer setup](development.md)
+
+This is an experimental dependency guide. RWS does not bundle this executable or its runtime libraries.
+
 On the tested macOS 27.0 / macFUSE 5.4.0 combination, official SSHFS 3.7.5 advertises an extended rename capability it does not support. RWS can use a separately built copy with that capability disabled. See [the diagnosis](fskit-debugging.md).
 
 ## Build
@@ -22,7 +26,7 @@ The script prints an exact `export RWS_SSHFS=...` command. Run it in the shell u
 ./target/debug/rws --config .rws-local/setup.json unmount setup-test
 ```
 
-Use the registered workspace/configuration for your machine. `RWS_SSHFS` selects one executable path, not shell arguments, and also affects `doctor`. Unset it to use the standard `sshfs` on PATH. For GLib installed elsewhere, set `RWS_GLIB_PREFIX` to its installation prefix before building.
+Use the registered workspace/configuration for your machine. `RWS_SSHFS` selects one executable path, not shell arguments, and also affects `doctor`. When unset, a saved SSHFS path takes precedence; only without that setting does RWS use `sshfs` on PATH. For GLib installed elsewhere, set `RWS_GLIB_PREFIX` to its installation prefix before building.
 
 ## Mount lifecycle
 
@@ -41,6 +45,10 @@ FSKit mounts now enable the patched binary's `rws_unicode` option. GLib converts
 SSHFS directory/attribute caching and FUSE attribute/entry/negative timeouts are disabled in conversion mode because byte-keyed caches retained stale metadata between NFC/NFD aliases. Bidirectional write/stat/unlink checks pass with this correction. This increases metadata requests; performance and concurrent remote-edit behavior remain unvalidated.
 
 ## Finder sidebar
+
+The app now attempts to renew its managed favorite on connect and remove it after
+successful disconnect. CLI mounting does not pin a favorite. The following is the
+manual fallback; see [current Finder behavior](finder-macos.md).
 
 Follow the [macOS Finder setup and acceptance guide](finder-macos.md) for per-user display categories, adding the mounted volume under Locations, replacing stale shortcuts after remount, and verifying actual folder/file creation. Sidebar persistence is not automatic or validated across remounts.
 

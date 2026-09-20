@@ -1,31 +1,26 @@
 # RWS for macOS
 
-This SwiftUI executable is the native front end for the RWS Rust CLI. The app
-never constructs shell commands: each user value is passed as a separate
-process argument to the bundled executable at
-`RWS.app/Contents/Resources/bin/rws`.
+This SwiftUI executable is the native front end for the RWS Rust CLI. Normal app operations pass user values as separate process arguments to
+`RWS.app/Contents/Resources/bin/rws`. The interactive agent action is different:
+`AgentLauncher` writes a private, shell-quoted `.command` file to open Terminal
+and invoke the bundled `rws agent`. See [architecture](../docs/architecture.md).
 
 ## Build and test
 
 The package targets macOS 13 or later and pins Sparkle 2.10.0 exactly.
 
-```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  CLANG_MODULE_CACHE_PATH=/tmp/rws-clang-cache \
-  SWIFTPM_MODULECACHE_OVERRIDE=/tmp/rws-swiftpm-module-cache \
-  swift test --package-path macos
+For the complete bundle and prerequisite procedure, follow the
+[developer guide](../docs/development.md). From the repository root:
 
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  CLANG_MODULE_CACHE_PATH=/tmp/rws-clang-cache \
-  SWIFTPM_MODULECACHE_OVERRIDE=/tmp/rws-swiftpm-module-cache \
-  swift build -c release --package-path macos --product RWSApp
+```sh
+swift test --package-path macos
+scripts/build-macos-app.sh development
+open dist/development/RWS.app
 ```
 
-The bundle builder must obtain the release directory from
-`swift build -c release --show-bin-path --package-path macos`, copy its
-`RWSApp` to `Contents/MacOS/RWSApp`, copy the Rust binary to
-`Contents/Resources/bin/rws`, and copy the resolved Sparkle framework into
-`Contents/Frameworks`.
+The bundle script resolves the Swift release output directory, embeds the Rust
+CLI and Sparkle framework, signs the development bundle and safely replaces its
+canonical location. `swift build` alone does not produce this assembled app.
 
 ## Local state and prerequisites
 

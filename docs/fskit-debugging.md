@@ -1,5 +1,9 @@
 # FSKit diagnosis — 2026-09-19
 
+> **Historical diagnosis.** The behavior below includes failures subsequently fixed
+> by the [patched SSHFS build](sshfs-fskit.md). For current setup, start with
+> [installation](install.md); for later evidence, read [validation](validation.md).
+
 Environment: macOS 27.0 (26A428), macFUSE 5.4.0, SSHFS 3.7.5. These findings apply to this tested combination. The installed SSHFS executable and system libraries were not modified.
 
 ## Rename capability mismatch
