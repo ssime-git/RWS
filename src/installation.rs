@@ -170,9 +170,29 @@ fn is_canonical_config(config_path: &Path) -> bool {
     // requested path closes `.`/`..` and symlink aliases; treating a missing
     // config as canonical would change the existing missing-config behavior.
     match (fs::canonicalize(config_path), fs::canonicalize(canonical)) {
-        (Ok(requested), Ok(canonical)) => requested == canonical,
+        (Ok(requested), Ok(canonical)) => same_config_file(&requested, &canonical),
         _ => false,
     }
+}
+
+#[cfg(unix)]
+fn same_config_file(requested: &Path, canonical: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    if requested == canonical {
+        return true;
+    }
+    match (fs::metadata(requested), fs::metadata(canonical)) {
+        (Ok(requested), Ok(canonical)) => {
+            requested.dev() == canonical.dev() && requested.ino() == canonical.ino()
+        }
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn same_config_file(requested: &Path, canonical: &Path) -> bool {
+    requested == canonical
 }
 
 fn effective_sshfs(config_path: &Path, config: &Config) -> Result<PathBuf, String> {

@@ -470,10 +470,12 @@ fn canonical_config_aliases_cannot_bypass_sshfs_override_rejection() {
     )
     .unwrap();
     std::os::unix::fs::symlink(&config, temp.path().join("config-alias.json")).unwrap();
+    std::fs::hard_link(&config, temp.path().join("config-hardlink.json")).unwrap();
 
     for alias in [
         "./home/Library/Application Support/RWS/config.json",
         "config-alias.json",
+        "config-hardlink.json",
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_rws"))
             .current_dir(temp.path())
