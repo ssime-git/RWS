@@ -240,25 +240,93 @@ fn config_namespace(config_path: &Path) -> String {
     namespace
 }
 
+fn generated_state_directories(config_path: &Path, config: &Config) -> Option<[PathBuf; 3]> {
+    let namespace = generated_state_directory(config_path, config)?;
+    let generation = namespace.parent()?.to_path_buf();
+    let root = generation.parent()?.to_path_buf();
+    Some([root, generation, namespace])
+}
+
+fn validate_generated_state_directory(directory: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(directory).map_err(|error| {
+        format!(
+            "inspect generated mount state {}: {error}",
+            directory.display()
+        )
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "unsafe generated mount state directory: {}",
+            directory.display()
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        // SAFETY: geteuid has no pointer arguments or memory safety preconditions.
+        let current_user = unsafe { libc::geteuid() };
+        if metadata.uid() != current_user || metadata.permissions().mode() & 0o077 != 0 {
+            return Err(format!(
+                "generated mount state directory must be owned by this user and mode 0700: {}",
+                directory.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn prepare_generated_state_directory(config_path: &Path, config: &Config) -> Result<(), String> {
+    let Some(directories) = generated_state_directories(config_path, config) else {
+        return Ok(());
+    };
+    for directory in directories {
+        match fs::symlink_metadata(&directory) {
+            Ok(_) => validate_generated_state_directory(&directory)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&directory).map_err(|error| {
+                    format!(
+                        "create generated mount state directory {}: {error}",
+                        directory.display()
+                    )
+                })?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+
+                    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+                        .map_err(|error| error.to_string())?;
+                }
+                validate_generated_state_directory(&directory)?;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "inspect generated mount state {}: {error}",
+                    directory.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn generated_state_is_safe(config_path: &Path, config: &Config) -> bool {
+    generated_state_directories(config_path, config).is_some_and(|directories| {
+        directories
+            .iter()
+            .all(|directory| validate_generated_state_directory(directory).is_ok())
+    })
+}
+
 fn create_receipt_directory(
     config_path: &Path,
     config: &Config,
     receipt: &Path,
 ) -> Result<(), String> {
-    let directory = receipt.parent().unwrap();
-    fs::create_dir_all(directory).map_err(|e| e.to_string())?;
-    if let Some(state) = generated_state_directory(config_path, config) {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-
-            let root = state.ancestors().nth(2).unwrap();
-            let generation = root.join(config.mount_state_generation.as_ref().unwrap());
-            for directory in [root, generation.as_path(), state.as_path()] {
-                fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
-                    .map_err(|e| e.to_string())?;
-            }
-        }
+    if config.mount_state_generation.is_some() {
+        prepare_generated_state_directory(config_path, config)?;
+    } else {
+        fs::create_dir_all(receipt.parent().unwrap()).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -317,6 +385,9 @@ pub fn verified(
     w: &Workspace,
     actual: &MountIdentity,
 ) -> bool {
+    if config.mount_state_generation.is_some() && !generated_state_is_safe(config_path, config) {
+        return false;
+    }
     fs::read(receipt_path(config_path, config, w))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Receipt>(&bytes).ok())
@@ -715,5 +786,82 @@ mod tests {
                 0o700
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_generated_state_is_rejected_for_writes_and_verification() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let attacker = temp.path().join("attacker");
+        fs::create_dir(&attacker).unwrap();
+        std::os::unix::fs::symlink(&attacker, temp.path().join("mount-state")).unwrap();
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: Some("release-20260922".into()),
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+        let identity = MountIdentity {
+            source: "macfuse://unique".into(),
+            filesystem: "macfuse".into(),
+            id: vec![1],
+        };
+        let receipt = Receipt {
+            host: workspace.host.clone(),
+            remote: workspace.remote_root.clone(),
+            root: workspace.mount_root.clone(),
+            identity: identity.clone(),
+        };
+        let attacker_receipt = attacker
+            .join("release-20260922")
+            .join(config_namespace(&config_path))
+            .join("demo.json");
+        fs::create_dir_all(attacker_receipt.parent().unwrap()).unwrap();
+        fs::write(&attacker_receipt, serde_json::to_vec(&receipt).unwrap()).unwrap();
+
+        assert!(record(&config_path, &config, &workspace, identity.clone()).is_err());
+        assert!(!verified(&config_path, &config, &workspace, &identity));
+        assert!(attacker_receipt.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_private_generated_state_does_not_verify_a_receipt() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: Some("release-20260922".into()),
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+        let identity = MountIdentity {
+            source: "macfuse://unique".into(),
+            filesystem: "macfuse".into(),
+            id: vec![1],
+        };
+
+        record(&config_path, &config, &workspace, identity.clone()).unwrap();
+        fs::set_permissions(
+            temp.path().join("mount-state"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        assert!(!verified(&config_path, &config, &workspace, &identity));
     }
 }
