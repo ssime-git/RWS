@@ -408,6 +408,48 @@ fn autostart_run_attempts_every_workspace_and_aggregates_failures() {
     assert!(stderr.contains("first"), "{stderr}");
     assert!(stderr.contains("second"), "{stderr}");
 }
+
+#[test]
+fn canonical_installation_rejects_a_conflicting_sshfs_override_everywhere() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let support = home.join("Library/Application Support/RWS");
+    std::fs::create_dir_all(&support).unwrap();
+    std::fs::write(
+        support.join("config.json"),
+        format!(
+            r#"{{"version":1,"workspaces":[{{"name":"demo","host":"dev@host","remote_root":"/srv/demo","mount_root":"{}"}}],"mount":{{"sshfs":"/managed/sshfs","fskit":false}}}}"#,
+            temp.path().join("mount").display(),
+        ),
+    )
+    .unwrap();
+
+    for args in [
+        vec!["mount", "demo", "--dry-run"],
+        vec!["mount", "demo", "--repair", "--dry-run"],
+        vec!["doctor"],
+        vec!["autostart", "run"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rws"))
+            .env("HOME", &home)
+            .env("RWS_SSHFS", "/checkout/sshfs")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(text.contains("RWS_SSHFS"), "{text}");
+        assert!(text.contains("canonical"), "{text}");
+    }
+}
 #[test]
 fn rejects_mount_overlap_through_parent_symlink_before_mount_exists() {
     let temp = tempfile::tempdir().unwrap();

@@ -131,15 +131,48 @@ pub fn install(
 pub fn install_current(layout: &Layout, source_config: &Path) -> Result<Installation, String> {
     let config = Config::load_existing(source_config)?;
     let rws = std::env::current_exe().map_err(|e| format!("find current RWS executable: {e}"))?;
-    let sshfs = effective_sshfs(&config)?;
+    let sshfs = effective_sshfs(source_config, &config)?;
     install(layout, source_config, &rws, &sshfs)
 }
 
-fn effective_sshfs(config: &Config) -> Result<PathBuf, String> {
-    let configured = std::env::var_os("RWS_SSHFS")
+/// Select SSHFS for one invocation. A durable configuration is authoritative:
+/// accepting a conflicting inherited override there could reintroduce a
+/// dependency on a deleted checkout at login.
+pub fn select_sshfs(config_path: &Path, config: &Config) -> Result<PathBuf, String> {
+    let configured = config
+        .mount
+        .sshfs
+        .as_deref()
         .map(PathBuf::from)
-        .or_else(|| config.mount.sshfs.as_deref().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("sshfs"));
+    let inherited = std::env::var_os("RWS_SSHFS").map(PathBuf::from);
+    if is_canonical_config(config_path) {
+        if let Some(inherited) = inherited {
+            if inherited != configured {
+                return Err(format!(
+                    "RWS_SSHFS={} conflicts with the canonical configured SSHFS {}; unset RWS_SSHFS or use the managed configuration",
+                    inherited.display(),
+                    configured.display()
+                ));
+            }
+        }
+        return Ok(configured);
+    }
+    Ok(inherited.unwrap_or(configured))
+}
+
+fn is_canonical_config(config_path: &Path) -> bool {
+    let Some(home) = std::env::var_os("HOME") else {
+        return false;
+    };
+    let canonical = Layout::macos(Path::new(&home)).config_path();
+    std::path::absolute(config_path)
+        .map(|path| path == canonical)
+        .unwrap_or(false)
+}
+
+fn effective_sshfs(config_path: &Path, config: &Config) -> Result<PathBuf, String> {
+    let configured = select_sshfs(config_path, config)?;
     if configured.is_absolute() {
         return Ok(configured);
     }

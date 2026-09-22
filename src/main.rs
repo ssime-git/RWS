@@ -286,12 +286,14 @@ fn available(program: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|path| std::env::split_paths(&path).any(|p| p.join(program).is_file()))
 }
-fn sshfs_program(config: &Config) -> String {
-    std::env::var("RWS_SSHFS")
-        .unwrap_or_else(|_| config.mount.sshfs.clone().unwrap_or_else(|| "sshfs".into()))
+fn sshfs_program(config_path: &std::path::Path, config: &Config) -> Result<String, String> {
+    rws::installation::select_sshfs(config_path, config)?
+        .into_os_string()
+        .into_string()
+        .map_err(|_| "configured SSHFS path is not UTF-8".into())
 }
-fn check_sshfs(config: &Config) -> Result<String, String> {
-    let program = sshfs_program(config);
+fn check_sshfs(config_path: &std::path::Path, config: &Config) -> Result<String, String> {
+    let program = sshfs_program(config_path, config)?;
     if !available(&program) {
         return Err("SSHFS is missing. Install macFUSE and SSHFS; see docs/prototype.md".into());
     }
@@ -705,6 +707,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             if !cfg!(target_os = "macos") {
                 return Err("mount is currently supported on macOS only".into());
             }
+            let program = sshfs_program(&path, &config)?;
             if fskit && w.mount_root.parent() != Some(std::path::Path::new("/Volumes")) {
                 return Err("FSKit requires a mount point directly under /Volumes".into());
             }
@@ -764,7 +767,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                                 // The dead volume's SSHFS server can outlive
                                 // the ejection and wedge the next mount.
                                 let ended = rws::lifecycle::terminate_stale_servers(
-                                    std::path::Path::new(&sshfs_program(&config)),
+                                    std::path::Path::new(&program),
                                     &format!("{}:{}", w.host, w.remote_root),
                                     &w.mount_root,
                                     std::time::Duration::from_secs(10),
@@ -793,7 +796,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                         return Err("a filesystem is already mounted here, but its identity is unverified; leaving it untouched. Use connect NAME --verify-existing to verify it against SSH without disconnecting".into());
                     }
                 }
-                let version = check_sshfs(&config)?;
+                let version = check_sshfs(&path, &config)?;
                 if fskit && !raw_names && !version.contains("3.7.5-rws-fskit3") {
                     return Err("FSKit Unicode support requires the RWS SSHFS build: run scripts/build-sshfs-fskit.sh and set RWS_SSHFS to its output. Use --raw-names only for intentional unconverted filename access".into());
                 }
@@ -837,7 +840,6 @@ fn run(cli: Cli) -> Result<i32, String> {
             }
             args.extend(["-o".into(), format!("volname=RWS-{}", w.name)]);
             args.push("-f".into());
-            let program = sshfs_program(&config);
             if dry_run {
                 return invoke(&program, &args, true, false);
             }
@@ -917,7 +919,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                 println!("{tool}: {}", if found { "available" } else { "missing" });
                 missing |= !found;
             }
-            match check_sshfs(&config) {
+            match check_sshfs(&path, &config) {
                 Ok(_) => println!("sshfs: available and runnable"),
                 Err(error) => {
                     println!("sshfs: unusable — {error}");
