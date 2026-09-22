@@ -284,19 +284,22 @@ fn prepare_generated_state_directory(config_path: &Path, config: &Config) -> Res
         match fs::symlink_metadata(&directory) {
             Ok(_) => validate_generated_state_directory(&directory)?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                fs::create_dir(&directory).map_err(|error| {
+                #[cfg(unix)]
+                let created = {
+                    use std::os::unix::fs::DirBuilderExt;
+
+                    let mut builder = fs::DirBuilder::new();
+                    builder.mode(0o700);
+                    builder.create(&directory)
+                };
+                #[cfg(not(unix))]
+                let created = fs::create_dir(&directory);
+                created.map_err(|error| {
                     format!(
                         "create generated mount state directory {}: {error}",
                         directory.display()
                     )
                 })?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-
-                    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
-                        .map_err(|error| error.to_string())?;
-                }
                 validate_generated_state_directory(&directory)?;
             }
             Err(error) => {
@@ -316,6 +319,26 @@ fn generated_state_is_safe(config_path: &Path, config: &Config) -> bool {
             .iter()
             .all(|directory| validate_generated_state_directory(directory).is_ok())
     })
+}
+
+fn durable_receipt_is_safe(receipt: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(receipt) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        // SAFETY: geteuid has no pointer arguments or memory safety preconditions.
+        let current_user = unsafe { libc::geteuid() };
+        if metadata.uid() != current_user || metadata.permissions().mode() & 0o077 != 0 {
+            return false;
+        }
+    }
+    true
 }
 
 fn create_receipt_directory(
@@ -388,7 +411,11 @@ pub fn verified(
     if config.mount_state_generation.is_some() && !generated_state_is_safe(config_path, config) {
         return false;
     }
-    fs::read(receipt_path(config_path, config, w))
+    let receipt = receipt_path(config_path, config, w);
+    if config.mount_state_generation.is_some() && !durable_receipt_is_safe(&receipt) {
+        return false;
+    }
+    fs::read(receipt)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Receipt>(&bytes).ok())
         .is_some_and(|r| {
@@ -862,6 +889,38 @@ mod tests {
             fs::Permissions::from_mode(0o755),
         )
         .unwrap();
+        assert!(!verified(&config_path, &config, &workspace, &identity));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_receipt_does_not_verify() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: Some("release-20260922".into()),
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+        let identity = MountIdentity {
+            source: "macfuse://unique".into(),
+            filesystem: "macfuse".into(),
+            id: vec![1],
+        };
+
+        record(&config_path, &config, &workspace, identity.clone()).unwrap();
+        let receipt = receipt_path(&config_path, &config, &workspace);
+        let attacker_receipt = temp.path().join("attacker-receipt.json");
+        fs::rename(&receipt, &attacker_receipt).unwrap();
+        std::os::unix::fs::symlink(&attacker_receipt, &receipt).unwrap();
+
         assert!(!verified(&config_path, &config, &workspace, &identity));
     }
 }
