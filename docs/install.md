@@ -23,6 +23,28 @@ configuration at login and retries failed mounts after 30 seconds. macFUSE's
 privileged helper still must be approved once from a real GUI terminal; a
 LaunchAgent cannot show that prompt.
 
+### Activate now and verify
+
+The agent is automatically loaded at the next macOS login. To activate it without
+restarting, run this from a normal user terminal (not an isolated automation
+environment):
+
+```sh
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/io.rws.mounts.plist"
+```
+
+It retries failed mounts every 30 seconds, for example while Tailscale is still
+connecting. Check its registration and the volumes with:
+
+```sh
+launchctl print "gui/$(id -u)/io.rws.mounts"
+mount | grep RWS
+```
+
+If the service is absent, rerun the two durable-install commands above. A failed
+mount does not establish that macFUSE can display a privilege prompt: approve its
+helper once in a GUI terminal, then let Launchd retry.
+
 Refresh zsh and Delta manually after installation using the managed executable:
 
 ```sh
