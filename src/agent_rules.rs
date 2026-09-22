@@ -60,21 +60,27 @@ fn managed_rules(config: &Path, binary: &Path) -> Result<String, String> {
         r#"{BEGIN}
 ## RWS remote execution — all registered projects
 
-Before the first terminal command in every task, and whenever the terminal checkout or project changes, obtain its actual absolute filesystem path and run:
+Before the first terminal command in every task, and whenever the terminal checkout or project changes, discover its actual absolute filesystem path locally:
 
 ```sh
-{command} context --cwd '/absolute/current/checkout'
+checkout=$(pwd -P)
 ```
 
-Read this command's JSON `mode`. This context check runs locally; it does not forward a workload. A `worktree://` URI is not a filesystem path. Resolve the actual checkout path, including a worktree's directory. Never infer routing from a project name, a previous task, or an earlier checkout. If context fails, is unknown, or the mounted path is inaccessible, stop and report the error. Do not proceed locally as a fallback.
+Do not ask the user to identify the machine when this local probe is available. If it fails or the conversation has no checkout, report that exact condition and ask the user to attach an existing checkout; do not infer a machine or use a previous path. Use `$checkout` in the context check:
+
+```sh
+{command} context --cwd "$checkout"
+```
+
+Read this command's JSON `mode`. This context check runs locally; it does not forward a workload. A `worktree://` URI is not a filesystem path. Never infer routing from a project name, a previous task, or an earlier checkout. If context fails, is unknown, or the mounted path is inaccessible, stop and report the error. Do not proceed locally as a fallback.
 
 For `mode: remote`, route EVERY agent shell workload through:
 
 ```sh
-{command} exec --cwd '/absolute/current/checkout' --git-context -- sh -c 'entire remote script'
+{command} exec --cwd "$checkout" --git-context -- sh -c 'entire remote script'
 ```
 
-Replace the placeholder with the actual absolute checkout path. Keep the complete script inside the quoted remote payload, including shell expansion, pipes, conditionals, command substitutions, and redirects; none may execute in the Mac shell. Correctly shell-quote any embedded single quotes. This applies to Git, file searches, package installation, interpreters, build tools, tests, and scripts. Native file read/edit tools may access the mounted files directly.
+Keep the complete script inside the quoted remote payload, including shell expansion, pipes, conditionals, command substitutions, and redirects; none may execute in the Mac shell. Correctly shell-quote any embedded single quotes. This applies to Git, file searches, package installation, interpreters, build tools, tests, and scripts. Native file read/edit tools may access the mounted files directly.
 
 For the first remote workload, run `uname -s; hostname; pwd` through this wrapper and report the resulting OS, host, and directory as evidence. Inspect available Linux interpreters and tools remotely before using them. Do not reuse Mac `/Users/...` executable paths or Mac environment assumptions. Preserve any existing macOS virtual environment; create a separate Linux environment such as `.venv-rws` when needed.
 
@@ -216,6 +222,8 @@ mod tests {
         assert!(first.starts_with("Custom rules.\n"));
         assert_eq!(first.matches(BEGIN).count(), 1);
         assert!(first.contains("rws binary'\\''s' --config '"));
+        assert!(first.contains("pwd -P"));
+        assert!(first.contains("Do not ask the user to identify the machine"));
         assert!(first.contains("context --cwd"));
         assert!(first.contains("--git-context -- sh -c"));
         assert_eq!(

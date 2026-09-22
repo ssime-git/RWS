@@ -32,6 +32,11 @@ enum Action {
         #[arg(long)]
         if_installed: bool,
     },
+    /// Install per-workspace macOS login agents that remount after reboot.
+    Autostart {
+        #[command(subcommand)]
+        action: AutostartAction,
+    },
     /// Remember this machine's mount backend and SSHFS executable.
     Settings {
         #[arg(long)]
@@ -142,6 +147,14 @@ enum HookAction {
     Install {
         #[arg(long)]
         zshrc: Option<PathBuf>,
+    },
+}
+#[derive(Subcommand)]
+enum AutostartAction {
+    /// Write one LaunchAgent per registered workspace. Load it with launchctl or log in again.
+    Install {
+        #[arg(long)]
+        directory: Option<PathBuf>,
     },
 }
 #[derive(Subcommand)]
@@ -338,6 +351,29 @@ fn run(cli: Cli) -> Result<i32, String> {
             println!("Global Delta RWS rules installed in {}", target.display());
             println!(
                 "Rules guide agent commands; they do not intercept Delta's internal processes."
+            );
+            Ok(0)
+        }
+        Action::Autostart {
+            action: AutostartAction::Install { directory },
+        } => {
+            if !cfg!(target_os = "macos") {
+                return Err("autostart is supported on macOS only".into());
+            }
+            let home = std::env::var_os("HOME").ok_or("HOME is unset; supply --directory")?;
+            let directory =
+                directory.unwrap_or_else(|| PathBuf::from(home).join("Library/LaunchAgents"));
+            let binary = std::env::current_exe().map_err(|e| e.to_string())?;
+            let config_path = path
+                .canonicalize()
+                .map_err(|e| format!("config path: {e}"))?;
+            let paths =
+                rws::autostart::install(&directory, &binary, &config_path, &config.workspaces)?;
+            for p in paths {
+                println!("Installed {}", p.display());
+            }
+            println!(
+                "LaunchAgents retry only failed mounts every 30 seconds; successful mounts are not restarted."
             );
             Ok(0)
         }
