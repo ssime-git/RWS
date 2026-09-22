@@ -166,9 +166,13 @@ fn is_canonical_config(config_path: &Path) -> bool {
         return false;
     };
     let canonical = Layout::macos(Path::new(&home)).config_path();
-    std::path::absolute(config_path)
-        .map(|path| path == canonical)
-        .unwrap_or(false)
+    // Both paths must exist to prove identity. In particular, resolving the
+    // requested path closes `.`/`..` and symlink aliases; treating a missing
+    // config as canonical would change the existing missing-config behavior.
+    match (fs::canonicalize(config_path), fs::canonicalize(canonical)) {
+        (Ok(requested), Ok(canonical)) => requested == canonical,
+        _ => false,
+    }
 }
 
 fn effective_sshfs(config_path: &Path, config: &Config) -> Result<PathBuf, String> {
