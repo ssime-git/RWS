@@ -6,6 +6,30 @@ This guide is for using the macOS app. You do not need Rust to run a built bundl
 However, the current preview is **not a self-contained, zero-setup installer**:
 macFUSE, compatible SSHFS and SSH access must already be configured.
 
+## Durable macOS installation
+
+After validating a configuration from a checkout, install it into the macOS
+user state before enabling login remounting:
+
+```sh
+/absolute/path/to/rws --config /absolute/path/to/setup.json install
+/Users/you/Library/Application\ Support/RWS/bin/rws autostart install
+```
+
+RWS keeps its canonical configuration in `~/Library/Application Support/RWS/`,
+uses a managed executable and versioned SSHFS release there, and preserves the
+source configuration. The single `io.rws.mounts` LaunchAgent reads that canonical
+configuration at login and retries failed mounts after 30 seconds. macFUSE's
+privileged helper still must be approved once from a real GUI terminal; a
+LaunchAgent cannot show that prompt.
+
+Refresh zsh and Delta manually after installation using the managed executable:
+
+```sh
+"$HOME/Library/Application Support/RWS/bin/rws" hook install
+"$HOME/Library/Application Support/RWS/bin/rws" delta-rules
+```
+
 ## 1. Get the app
 
 ### Build availability
