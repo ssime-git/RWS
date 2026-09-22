@@ -1,4 +1,5 @@
 pub mod config;
+pub mod installation;
 pub mod transport;
 pub mod workspace;
 
