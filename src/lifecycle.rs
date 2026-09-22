@@ -1,5 +1,5 @@
 //! Mount identity is read from the OS mount table, without touching remote files.
-use crate::workspace::Workspace;
+use crate::{config::Config, workspace::Workspace};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -204,11 +204,154 @@ struct Receipt {
     root: PathBuf,
     identity: MountIdentity,
 }
-fn receipt_path(config: &Path, workspace: &Workspace) -> PathBuf {
-    // Keep receipts separate for separate config files in the same directory.
-    let mut directory = config.as_os_str().to_os_string();
+fn receipt_path(config_path: &Path, config: &Config, workspace: &Workspace) -> PathBuf {
+    if let Some(directory) = generated_state_directory(config_path, config) {
+        return directory.join(format!("{}.json", workspace.name));
+    }
+    // Keep legacy receipts separate for separate config files in the same directory.
+    let mut directory = config_path.as_os_str().to_os_string();
     directory.push(".mount-state");
     PathBuf::from(directory).join(format!("{}.json", workspace.name))
+}
+
+fn generated_state_directory(config_path: &Path, config: &Config) -> Option<PathBuf> {
+    let generation = config.mount_state_generation.as_ref()?;
+    let parent = config_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    Some(
+        parent
+            .join("mount-state")
+            .join(generation)
+            .join(config_namespace(config_path)),
+    )
+}
+
+fn config_namespace(config_path: &Path) -> String {
+    let name = config_path
+        .file_name()
+        .unwrap_or(config_path.as_os_str())
+        .as_encoded_bytes();
+    let mut namespace = String::from("config-");
+    for byte in name {
+        namespace.push_str(&format!("{byte:02x}"));
+    }
+    namespace
+}
+
+fn generated_state_directories(config_path: &Path, config: &Config) -> Option<[PathBuf; 3]> {
+    let namespace = generated_state_directory(config_path, config)?;
+    let generation = namespace.parent()?.to_path_buf();
+    let root = generation.parent()?.to_path_buf();
+    Some([root, generation, namespace])
+}
+
+fn validate_generated_state_directory(directory: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(directory).map_err(|error| {
+        format!(
+            "inspect generated mount state {}: {error}",
+            directory.display()
+        )
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "unsafe generated mount state directory: {}",
+            directory.display()
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        // SAFETY: geteuid has no pointer arguments or memory safety preconditions.
+        let current_user = unsafe { libc::geteuid() };
+        if metadata.uid() != current_user || metadata.permissions().mode() & 0o077 != 0 {
+            return Err(format!(
+                "generated mount state directory must be owned by this user and mode 0700: {}",
+                directory.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn prepare_generated_state_directory(config_path: &Path, config: &Config) -> Result<(), String> {
+    let Some(directories) = generated_state_directories(config_path, config) else {
+        return Ok(());
+    };
+    for directory in directories {
+        match fs::symlink_metadata(&directory) {
+            Ok(_) => validate_generated_state_directory(&directory)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                #[cfg(unix)]
+                let created = {
+                    use std::os::unix::fs::DirBuilderExt;
+
+                    let mut builder = fs::DirBuilder::new();
+                    builder.mode(0o700);
+                    builder.create(&directory)
+                };
+                #[cfg(not(unix))]
+                let created = fs::create_dir(&directory);
+                created.map_err(|error| {
+                    format!(
+                        "create generated mount state directory {}: {error}",
+                        directory.display()
+                    )
+                })?;
+                validate_generated_state_directory(&directory)?;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "inspect generated mount state {}: {error}",
+                    directory.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn generated_state_is_safe(config_path: &Path, config: &Config) -> bool {
+    generated_state_directories(config_path, config).is_some_and(|directories| {
+        directories
+            .iter()
+            .all(|directory| validate_generated_state_directory(directory).is_ok())
+    })
+}
+
+fn durable_receipt_is_safe(receipt: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(receipt) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        // SAFETY: geteuid has no pointer arguments or memory safety preconditions.
+        let current_user = unsafe { libc::geteuid() };
+        if metadata.uid() != current_user || metadata.permissions().mode() & 0o077 != 0 {
+            return false;
+        }
+    }
+    true
+}
+
+fn create_receipt_directory(
+    config_path: &Path,
+    config: &Config,
+    receipt: &Path,
+) -> Result<(), String> {
+    if config.mount_state_generation.is_some() {
+        prepare_generated_state_directory(config_path, config)?;
+    } else {
+        fs::create_dir_all(receipt.parent().unwrap()).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 pub struct OperationLock(PathBuf);
 impl Drop for OperationLock {
@@ -216,20 +359,25 @@ impl Drop for OperationLock {
         let _ = fs::remove_file(&self.0);
     }
 }
-pub fn lock(config: &Path, w: &Workspace) -> Result<OperationLock, String> {
+pub fn lock(config_path: &Path, config: &Config, w: &Workspace) -> Result<OperationLock, String> {
     use std::{io::Write, os::unix::fs::OpenOptionsExt};
-    let path = receipt_path(config, w).with_extension("lock");
-    fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    let path = receipt_path(config_path, config, w).with_extension("lock");
+    create_receipt_directory(config_path, config, &path)?;
     let mut file = fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(&path)
         .map_err(|e| format!("operation lock {}: {e}; another operation may be active; inspect stale locks after a crash", path.display()))?;
     let guard = OperationLock(path);
     writeln!(file, "{}", std::process::id()).map_err(|e| e.to_string())?;
     Ok(guard)
 }
-pub fn record(config: &Path, w: &Workspace, identity: MountIdentity) -> Result<(), String> {
+pub fn record(
+    config_path: &Path,
+    config: &Config,
+    w: &Workspace,
+    identity: MountIdentity,
+) -> Result<(), String> {
     use std::{io::Write, os::unix::fs::OpenOptionsExt};
-    let path = receipt_path(config, w);
-    fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    let path = receipt_path(config_path, config, w);
+    create_receipt_directory(config_path, config, &path)?;
     let temp = path.with_extension(format!("{}.tmp", std::process::id()));
     let mut file = fs::OpenOptions::new()
         .create_new(true)
@@ -254,8 +402,20 @@ pub fn record(config: &Path, w: &Workspace, identity: MountIdentity) -> Result<(
     }
     result
 }
-pub fn verified(config: &Path, w: &Workspace, actual: &MountIdentity) -> bool {
-    fs::read(receipt_path(config, w))
+pub fn verified(
+    config_path: &Path,
+    config: &Config,
+    w: &Workspace,
+    actual: &MountIdentity,
+) -> bool {
+    if config.mount_state_generation.is_some() && !generated_state_is_safe(config_path, config) {
+        return false;
+    }
+    let receipt = receipt_path(config_path, config, w);
+    if config.mount_state_generation.is_some() && !durable_receipt_is_safe(&receipt) {
+        return false;
+    }
+    fs::read(receipt)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Receipt>(&bytes).ok())
         .is_some_and(|r| {
@@ -265,8 +425,8 @@ pub fn verified(config: &Path, w: &Workspace, actual: &MountIdentity) -> bool {
                 && r.identity == *actual
         })
 }
-pub fn forget(config: &Path, w: &Workspace) -> Result<(), String> {
-    match fs::remove_file(receipt_path(config, w)) {
+pub fn forget(config_path: &Path, config: &Config, w: &Workspace) -> Result<(), String> {
+    match fs::remove_file(receipt_path(config_path, config, w)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(format!("remove mount receipt: {e}")),
@@ -361,6 +521,7 @@ pub fn attest(w: &Workspace, expected: &MountIdentity) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{Config, MountOptions};
     #[test]
     fn probe_health_accepts_a_readable_directory_and_reports_failures() {
         let temp = tempfile::tempdir().unwrap();
@@ -470,7 +631,13 @@ mod tests {
     #[test]
     fn receipt_does_not_authorize_a_different_mount_or_destination() {
         let temp = tempfile::tempdir().unwrap();
-        let config = temp.path().join("config.json");
+        let config_path = temp.path().join("config.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: None,
+        };
         let mut w = Workspace {
             name: "demo".into(),
             host: "host".into(),
@@ -482,17 +649,278 @@ mod tests {
             filesystem: "macfuse".into(),
             id: vec![1],
         };
-        assert!(!verified(&config, &w, &mount));
-        record(&config, &w, mount.clone()).unwrap();
-        assert!(verified(&config, &w, &mount));
-        assert!(!verified(&temp.path().join("other.json"), &w, &mount));
+        assert!(!verified(&config_path, &config, &w, &mount));
+        record(&config_path, &config, &w, mount.clone()).unwrap();
+        assert!(verified(&config_path, &config, &w, &mount));
+        assert!(!verified(
+            &temp.path().join("other.json"),
+            &config,
+            &w,
+            &mount
+        ));
         mount.id = vec![2];
-        assert!(!verified(&config, &w, &mount));
+        assert!(!verified(&config_path, &config, &w, &mount));
         mount.id = vec![1];
         w.remote_root = "/other".into();
-        assert!(!verified(&config, &w, &mount));
-        forget(&config, &w).unwrap();
-        forget(&config, &w).unwrap();
-        assert!(!verified(&config, &w, &mount));
+        assert!(!verified(&config_path, &config, &w, &mount));
+        forget(&config_path, &config, &w).unwrap();
+        forget(&config_path, &config, &w).unwrap();
+        assert!(!verified(&config_path, &config, &w, &mount));
+    }
+
+    #[test]
+    fn receipt_uses_the_configured_durable_generation() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: Some("release-20260922".into()),
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+
+        let receipt = temp
+            .path()
+            .join("mount-state")
+            .join("release-20260922")
+            .join("config-636f6e6669672e6a736f6e")
+            .join("demo.json");
+        let identity = MountIdentity {
+            source: "macfuse://unique".into(),
+            filesystem: "macfuse".into(),
+            id: vec![1],
+        };
+
+        assert_eq!(receipt_path(&config_path, &config, &workspace), receipt);
+        let operation = lock(&config_path, &config, &workspace).unwrap();
+        assert!(
+            temp.path()
+                .join("mount-state")
+                .join("release-20260922")
+                .join("config-636f6e6669672e6a736f6e")
+                .join("demo.lock")
+                .exists()
+        );
+        drop(operation);
+        record(&config_path, &config, &workspace, identity.clone()).unwrap();
+        assert!(receipt.exists());
+        assert!(verified(&config_path, &config, &workspace, &identity));
+        forget(&config_path, &config, &workspace).unwrap();
+        assert!(!receipt.exists());
+        assert!(!verified(&config_path, &config, &workspace, &identity));
+    }
+
+    #[test]
+    fn receipt_without_a_generation_uses_the_legacy_adjacent_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: None,
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+
+        assert_eq!(
+            receipt_path(&config_path, &config, &workspace),
+            temp.path()
+                .join("config.json.mount-state")
+                .join("demo.json")
+        );
+    }
+
+    #[test]
+    fn durable_configs_in_the_same_directory_do_not_share_receipts_or_locks() {
+        let temp = tempfile::tempdir().unwrap();
+        let first_path = temp.path().join("first.json");
+        let second_path = temp.path().join("second.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: Some("release-20260922".into()),
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+        let identity = MountIdentity {
+            source: "macfuse://unique".into(),
+            filesystem: "macfuse".into(),
+            id: vec![1],
+        };
+
+        let first_receipt = receipt_path(&first_path, &config, &workspace);
+        let second_receipt = receipt_path(&second_path, &config, &workspace);
+        assert_ne!(first_receipt, second_receipt);
+        record(&first_path, &config, &workspace, identity.clone()).unwrap();
+        assert!(verified(&first_path, &config, &workspace, &identity));
+        assert!(!verified(&second_path, &config, &workspace, &identity));
+
+        let _first_lock = lock(&first_path, &config, &workspace).unwrap();
+        let _second_lock = lock(&second_path, &config, &workspace).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generated_mount_state_directory_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: Some("release-20260922".into()),
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+        let identity = MountIdentity {
+            source: "macfuse://unique".into(),
+            filesystem: "macfuse".into(),
+            id: vec![1],
+        };
+
+        record(&config_path, &config, &workspace, identity).unwrap();
+        let receipt = receipt_path(&config_path, &config, &workspace);
+        let namespace = receipt.parent().unwrap();
+        for directory in [
+            namespace,
+            namespace.parent().unwrap(),
+            namespace.parent().unwrap().parent().unwrap(),
+        ] {
+            assert_eq!(
+                fs::metadata(directory).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_generated_state_is_rejected_for_writes_and_verification() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let attacker = temp.path().join("attacker");
+        fs::create_dir(&attacker).unwrap();
+        std::os::unix::fs::symlink(&attacker, temp.path().join("mount-state")).unwrap();
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: Some("release-20260922".into()),
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+        let identity = MountIdentity {
+            source: "macfuse://unique".into(),
+            filesystem: "macfuse".into(),
+            id: vec![1],
+        };
+        let receipt = Receipt {
+            host: workspace.host.clone(),
+            remote: workspace.remote_root.clone(),
+            root: workspace.mount_root.clone(),
+            identity: identity.clone(),
+        };
+        let attacker_receipt = attacker
+            .join("release-20260922")
+            .join(config_namespace(&config_path))
+            .join("demo.json");
+        fs::create_dir_all(attacker_receipt.parent().unwrap()).unwrap();
+        fs::write(&attacker_receipt, serde_json::to_vec(&receipt).unwrap()).unwrap();
+
+        assert!(record(&config_path, &config, &workspace, identity.clone()).is_err());
+        assert!(!verified(&config_path, &config, &workspace, &identity));
+        assert!(attacker_receipt.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_private_generated_state_does_not_verify_a_receipt() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: Some("release-20260922".into()),
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+        let identity = MountIdentity {
+            source: "macfuse://unique".into(),
+            filesystem: "macfuse".into(),
+            id: vec![1],
+        };
+
+        record(&config_path, &config, &workspace, identity.clone()).unwrap();
+        fs::set_permissions(
+            temp.path().join("mount-state"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        assert!(!verified(&config_path, &config, &workspace, &identity));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_receipt_does_not_verify() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: Some("release-20260922".into()),
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+        let identity = MountIdentity {
+            source: "macfuse://unique".into(),
+            filesystem: "macfuse".into(),
+            id: vec![1],
+        };
+
+        record(&config_path, &config, &workspace, identity.clone()).unwrap();
+        let receipt = receipt_path(&config_path, &config, &workspace);
+        let attacker_receipt = temp.path().join("attacker-receipt.json");
+        fs::rename(&receipt, &attacker_receipt).unwrap();
+        std::os::unix::fs::symlink(&attacker_receipt, &receipt).unwrap();
+
+        assert!(!verified(&config_path, &config, &workspace, &identity));
     }
 }

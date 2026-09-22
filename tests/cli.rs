@@ -7,6 +7,14 @@ fn run(config: &std::path::Path, args: &[&str]) -> Output {
         .output()
         .unwrap()
 }
+
+fn run_in_home(home: &std::path::Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_rws"))
+        .env("HOME", home)
+        .args(args)
+        .output()
+        .unwrap()
+}
 fn register(config: &std::path::Path, root: &std::path::Path) {
     let out = run(
         config,
@@ -285,6 +293,225 @@ fn missing_sshfs_has_actionable_error_and_creates_no_mount_directory() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("SSHFS is missing"));
     assert!(!root.exists());
+}
+
+#[test]
+fn install_copies_a_source_config_to_the_canonical_durable_layout() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let source = temp.path().join("source.json");
+    let sshfs = temp.path().join("sshfs");
+    std::fs::write(&sshfs, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&sshfs, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(
+        &source,
+        format!(
+            r#"{{"version":1,"workspaces":[],"mount":{{"sshfs":"{}","fskit":false}}}}"#,
+            sshfs.display()
+        ),
+    )
+    .unwrap();
+    let source_before = std::fs::read(&source).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rws"))
+        .env("HOME", &home)
+        .arg("--config")
+        .arg(&source)
+        .arg("install")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let support = home.join("Library/Application Support/RWS");
+    assert!(support.join("bin/rws").is_file());
+    let installed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(support.join("config.json")).unwrap()).unwrap();
+    assert!(
+        installed["mount"]["sshfs"]
+            .as_str()
+            .unwrap()
+            .contains("/releases/")
+    );
+    assert_eq!(std::fs::read(&source).unwrap(), source_before);
+}
+
+#[test]
+fn autostart_uses_only_the_canonical_completed_installation() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let source = temp.path().join("source.json");
+    std::fs::write(&source, r#"{"version":1,"workspaces":[]}"#).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rws"))
+        .env("HOME", &home)
+        .arg("--config")
+        .arg(&source)
+        .args(["autostart", "run"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--config"));
+
+    let output = run_in_home(&home, &["autostart", "install"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("managed RWS binary"));
+}
+
+#[test]
+fn autostart_run_attempts_every_workspace_and_aggregates_failures() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let support = home.join("Library/Application Support/RWS");
+    std::fs::create_dir_all(&support).unwrap();
+    let sshfs = temp.path().join("sshfs");
+    std::fs::write(
+        &sshfs,
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then exit 0; fi\nexit 9\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&sshfs, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let first = temp.path().join("first");
+    let second = temp.path().join("second");
+    std::fs::write(
+        support.join("config.json"),
+        format!(
+            r#"{{"version":1,"workspaces":[{{"name":"first","host":"dev@host","remote_root":"/srv/first","mount_root":"{}"}},{{"name":"second","host":"dev@host","remote_root":"/srv/second","mount_root":"{}"}}],"mount":{{"sshfs":"{}","fskit":false}}}}"#,
+            first.display(),
+            second.display(),
+            sshfs.display(),
+        ),
+    )
+    .unwrap();
+
+    let output = run_in_home(&home, &["autostart", "run"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("first"), "{stderr}");
+    assert!(stderr.contains("second"), "{stderr}");
+}
+
+#[test]
+fn canonical_installation_rejects_a_conflicting_sshfs_override_everywhere() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let support = home.join("Library/Application Support/RWS");
+    std::fs::create_dir_all(&support).unwrap();
+    std::fs::write(
+        support.join("config.json"),
+        format!(
+            r#"{{"version":1,"workspaces":[{{"name":"demo","host":"dev@host","remote_root":"/srv/demo","mount_root":"{}"}}],"mount":{{"sshfs":"/managed/sshfs","fskit":false}}}}"#,
+            temp.path().join("mount").display(),
+        ),
+    )
+    .unwrap();
+
+    for args in [
+        vec!["mount", "demo", "--dry-run"],
+        vec!["mount", "demo", "--repair", "--dry-run"],
+        vec!["doctor"],
+        vec!["autostart", "run"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rws"))
+            .env("HOME", &home)
+            .env("RWS_SSHFS", "/checkout/sshfs")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(text.contains("RWS_SSHFS"), "{text}");
+        assert!(text.contains("canonical"), "{text}");
+    }
+}
+
+#[test]
+fn canonical_config_aliases_cannot_bypass_sshfs_override_rejection() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let support = home.join("Library/Application Support/RWS");
+    std::fs::create_dir_all(&support).unwrap();
+    let config = support.join("config.json");
+    std::fs::write(
+        &config,
+        format!(
+            r#"{{"version":1,"workspaces":[{{"name":"demo","host":"dev@host","remote_root":"/srv/demo","mount_root":"{}"}}],"mount":{{"sshfs":"/managed/sshfs","fskit":false}}}}"#,
+            temp.path().join("mount").display(),
+        ),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&config, temp.path().join("config-alias.json")).unwrap();
+    std::fs::hard_link(&config, temp.path().join("config-hardlink.json")).unwrap();
+
+    for alias in [
+        "./home/Library/Application Support/RWS/config.json",
+        "config-alias.json",
+        "config-hardlink.json",
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rws"))
+            .current_dir(temp.path())
+            .env("HOME", &home)
+            .env("RWS_SSHFS", "/checkout/sshfs")
+            .args(["--config", alias, "mount", "demo", "--dry-run"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "alias {alias} must be rejected");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("RWS_SSHFS"),
+            "alias {alias}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn missing_canonical_config_keeps_the_existing_override_behavior() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rws"))
+        .env("HOME", &home)
+        .env("RWS_SSHFS", "/missing/sshfs")
+        .arg("doctor")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("SSHFS is missing"), "{stdout}");
+    assert!(!stdout.contains("conflicts with the canonical"), "{stdout}");
 }
 #[test]
 fn rejects_mount_overlap_through_parent_symlink_before_mount_exists() {
