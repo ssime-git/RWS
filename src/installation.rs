@@ -78,7 +78,9 @@ pub fn install(
     activated.mount.sshfs = Some(path_string(&staged_sshfs)?);
     activated.mount_state_generation = Some(generation.clone());
     let destination_state = state_directory(&layout.config_path(), &generation);
-    prepare_private_directory(&destination_state)?;
+    let state_generation = layout.mount_state().join(&generation);
+    create_fresh_private_directory(&state_generation)?;
+    create_fresh_private_directory(&destination_state)?;
     migrate_receipts(&source_receipts, &activated, &destination_state)?;
 
     // This is deliberately the final write: an unsuccessful install leaves
@@ -406,6 +408,7 @@ mod tests {
         let layout = Layout::at(temp.path().join("support"));
 
         let installed = install(&layout, &source_config, &rws, &sshfs).unwrap();
+        let active = Config::load_existing(&layout.config_path()).unwrap();
         let state = layout
             .mount_state()
             .join(&installed.generation)
@@ -418,6 +421,14 @@ mod tests {
             0o700
         );
         assert_eq!(
+            fs::metadata(layout.mount_state().join(&installed.generation))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
             fs::metadata(state.join("demo.json"))
                 .unwrap()
                 .permissions()
@@ -425,5 +436,15 @@ mod tests {
                 & 0o777,
             0o600
         );
+        assert!(crate::lifecycle::verified(
+            &layout.config_path(),
+            &active,
+            &active.workspaces[0],
+            &crate::lifecycle::MountIdentity {
+                source: "x".into(),
+                filesystem: "x".into(),
+                id: vec![1],
+            }
+        ));
     }
 }
