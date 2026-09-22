@@ -1,5 +1,5 @@
 //! Mount identity is read from the OS mount table, without touching remote files.
-use crate::workspace::Workspace;
+use crate::{config::Config, workspace::Workspace};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -204,9 +204,18 @@ struct Receipt {
     root: PathBuf,
     identity: MountIdentity,
 }
-fn receipt_path(config: &Path, workspace: &Workspace) -> PathBuf {
-    // Keep receipts separate for separate config files in the same directory.
-    let mut directory = config.as_os_str().to_os_string();
+fn receipt_path(config_path: &Path, config: &Config, workspace: &Workspace) -> PathBuf {
+    if let Some(generation) = &config.mount_state_generation {
+        return config_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+            .join("mount-state")
+            .join(generation)
+            .join(format!("{}.json", workspace.name));
+    }
+    // Keep legacy receipts separate for separate config files in the same directory.
+    let mut directory = config_path.as_os_str().to_os_string();
     directory.push(".mount-state");
     PathBuf::from(directory).join(format!("{}.json", workspace.name))
 }
@@ -216,9 +225,9 @@ impl Drop for OperationLock {
         let _ = fs::remove_file(&self.0);
     }
 }
-pub fn lock(config: &Path, w: &Workspace) -> Result<OperationLock, String> {
+pub fn lock(config_path: &Path, config: &Config, w: &Workspace) -> Result<OperationLock, String> {
     use std::{io::Write, os::unix::fs::OpenOptionsExt};
-    let path = receipt_path(config, w).with_extension("lock");
+    let path = receipt_path(config_path, config, w).with_extension("lock");
     fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
     let mut file = fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(&path)
         .map_err(|e| format!("operation lock {}: {e}; another operation may be active; inspect stale locks after a crash", path.display()))?;
@@ -226,9 +235,14 @@ pub fn lock(config: &Path, w: &Workspace) -> Result<OperationLock, String> {
     writeln!(file, "{}", std::process::id()).map_err(|e| e.to_string())?;
     Ok(guard)
 }
-pub fn record(config: &Path, w: &Workspace, identity: MountIdentity) -> Result<(), String> {
+pub fn record(
+    config_path: &Path,
+    config: &Config,
+    w: &Workspace,
+    identity: MountIdentity,
+) -> Result<(), String> {
     use std::{io::Write, os::unix::fs::OpenOptionsExt};
-    let path = receipt_path(config, w);
+    let path = receipt_path(config_path, config, w);
     fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
     let temp = path.with_extension(format!("{}.tmp", std::process::id()));
     let mut file = fs::OpenOptions::new()
@@ -254,8 +268,13 @@ pub fn record(config: &Path, w: &Workspace, identity: MountIdentity) -> Result<(
     }
     result
 }
-pub fn verified(config: &Path, w: &Workspace, actual: &MountIdentity) -> bool {
-    fs::read(receipt_path(config, w))
+pub fn verified(
+    config_path: &Path,
+    config: &Config,
+    w: &Workspace,
+    actual: &MountIdentity,
+) -> bool {
+    fs::read(receipt_path(config_path, config, w))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Receipt>(&bytes).ok())
         .is_some_and(|r| {
@@ -265,8 +284,8 @@ pub fn verified(config: &Path, w: &Workspace, actual: &MountIdentity) -> bool {
                 && r.identity == *actual
         })
 }
-pub fn forget(config: &Path, w: &Workspace) -> Result<(), String> {
-    match fs::remove_file(receipt_path(config, w)) {
+pub fn forget(config_path: &Path, config: &Config, w: &Workspace) -> Result<(), String> {
+    match fs::remove_file(receipt_path(config_path, config, w)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(format!("remove mount receipt: {e}")),
@@ -361,6 +380,7 @@ pub fn attest(w: &Workspace, expected: &MountIdentity) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{Config, MountOptions};
     #[test]
     fn probe_health_accepts_a_readable_directory_and_reports_failures() {
         let temp = tempfile::tempdir().unwrap();
@@ -470,7 +490,13 @@ mod tests {
     #[test]
     fn receipt_does_not_authorize_a_different_mount_or_destination() {
         let temp = tempfile::tempdir().unwrap();
-        let config = temp.path().join("config.json");
+        let config_path = temp.path().join("config.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: None,
+        };
         let mut w = Workspace {
             name: "demo".into(),
             host: "host".into(),
@@ -482,17 +508,93 @@ mod tests {
             filesystem: "macfuse".into(),
             id: vec![1],
         };
-        assert!(!verified(&config, &w, &mount));
-        record(&config, &w, mount.clone()).unwrap();
-        assert!(verified(&config, &w, &mount));
-        assert!(!verified(&temp.path().join("other.json"), &w, &mount));
+        assert!(!verified(&config_path, &config, &w, &mount));
+        record(&config_path, &config, &w, mount.clone()).unwrap();
+        assert!(verified(&config_path, &config, &w, &mount));
+        assert!(!verified(
+            &temp.path().join("other.json"),
+            &config,
+            &w,
+            &mount
+        ));
         mount.id = vec![2];
-        assert!(!verified(&config, &w, &mount));
+        assert!(!verified(&config_path, &config, &w, &mount));
         mount.id = vec![1];
         w.remote_root = "/other".into();
-        assert!(!verified(&config, &w, &mount));
-        forget(&config, &w).unwrap();
-        forget(&config, &w).unwrap();
-        assert!(!verified(&config, &w, &mount));
+        assert!(!verified(&config_path, &config, &w, &mount));
+        forget(&config_path, &config, &w).unwrap();
+        forget(&config_path, &config, &w).unwrap();
+        assert!(!verified(&config_path, &config, &w, &mount));
+    }
+
+    #[test]
+    fn receipt_uses_the_configured_durable_generation() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: Some("release-20260922".into()),
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+
+        let receipt = temp
+            .path()
+            .join("mount-state")
+            .join("release-20260922")
+            .join("demo.json");
+        let identity = MountIdentity {
+            source: "macfuse://unique".into(),
+            filesystem: "macfuse".into(),
+            id: vec![1],
+        };
+
+        assert_eq!(receipt_path(&config_path, &config, &workspace), receipt);
+        let operation = lock(&config_path, &config, &workspace).unwrap();
+        assert!(
+            temp.path()
+                .join("mount-state")
+                .join("release-20260922")
+                .join("demo.lock")
+                .exists()
+        );
+        drop(operation);
+        record(&config_path, &config, &workspace, identity.clone()).unwrap();
+        assert!(receipt.exists());
+        assert!(verified(&config_path, &config, &workspace, &identity));
+        forget(&config_path, &config, &workspace).unwrap();
+        assert!(!receipt.exists());
+        assert!(!verified(&config_path, &config, &workspace, &identity));
+    }
+
+    #[test]
+    fn receipt_without_a_generation_uses_the_legacy_adjacent_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: None,
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+
+        assert_eq!(
+            receipt_path(&config_path, &config, &workspace),
+            temp.path()
+                .join("config.json.mount-state")
+                .join("demo.json")
+        );
     }
 }

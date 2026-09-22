@@ -206,10 +206,14 @@ fn resolve(config: &Config, name: Option<&str>) -> Result<(Workspace, String), S
     }
     Ok(matches.into_iter().next().unwrap())
 }
-fn require_verified_mount(config: &std::path::Path, w: &Workspace) -> Result<(), String> {
+fn require_verified_mount(
+    config_path: &std::path::Path,
+    config: &Config,
+    w: &Workspace,
+) -> Result<(), String> {
     let actual = rws::lifecycle::identity(&w.mount_root)?
         .ok_or("RWS workspace is disconnected; connect it before forwarding commands")?;
-    if !rws::lifecycle::verified(config, w, &actual) {
+    if !rws::lifecycle::verified(config_path, config, w, &actual) {
         return Err("RWS mount identity is unverified; use connect NAME --verify-existing before forwarding commands".into());
     }
     Ok(())
@@ -385,7 +389,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             match rws::routing::resolve_directory(&config, &cwd)? {
                 None => println!("{}", serde_json::json!({"mode":"local","cwd":cwd})),
                 Some((w, remote)) => {
-                    require_verified_mount(&path, &w)?;
+                    require_verified_mount(&path, &config, &w)?;
                     println!(
                         "{}",
                         serde_json::json!({"mode":"remote","workspace":w.name,"host":w.host,"cwd":cwd,"remote_cwd":remote,"mount_verified":true})
@@ -427,7 +431,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             for w in selected {
                 let state = match rws::lifecycle::identity(&w.mount_root) {
                     Ok(None) => "disconnected".to_string(),
-                    Ok(Some(ref actual)) if rws::lifecycle::verified(&path, w, actual) => {
+                    Ok(Some(ref actual)) if rws::lifecycle::verified(&path, &config, w, actual) => {
                         match rws::lifecycle::probe_health(
                             &w.mount_root,
                             std::time::Duration::from_secs(4),
@@ -508,7 +512,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                     "directory is not in a registered RWS workspace; refusing local fallback",
                 )?;
                 if !dry_run {
-                    require_verified_mount(&path, &selected.0)?;
+                    require_verified_mount(&path, &config, &selected.0)?;
                 }
                 selected
             } else {
@@ -548,7 +552,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                         "directory is not in a registered RWS workspace; refusing local fallback",
                     )?;
                     if !dry_run {
-                        require_verified_mount(&path, &selected.0)?;
+                        require_verified_mount(&path, &config, &selected.0)?;
                     }
                     selected
                 }
@@ -622,11 +626,11 @@ fn run(cli: Cli) -> Result<i32, String> {
             let _operation = if dry_run {
                 None
             } else {
-                Some(rws::lifecycle::lock(&path, w)?)
+                Some(rws::lifecycle::lock(&path, &config, w)?)
             };
             if !dry_run {
                 if let Some(actual) = rws::lifecycle::identity(&w.mount_root)? {
-                    if rws::lifecycle::verified(&path, w, &actual) {
+                    if rws::lifecycle::verified(&path, &config, w, &actual) {
                         let health = rws::lifecycle::probe_health(
                             &w.mount_root,
                             std::time::Duration::from_secs(4),
@@ -671,7 +675,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                                         "forced ejection failed; the volume is still mounted. Close programs using it and retry".into(),
                                     );
                                 }
-                                rws::lifecycle::forget(&path, w)?;
+                                rws::lifecycle::forget(&path, &config, w)?;
                                 // The dead volume's SSHFS server can outlive
                                 // the ejection and wedge the next mount.
                                 let ended = rws::lifecycle::terminate_stale_servers(
@@ -697,7 +701,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                         }
                     } else if verify_existing {
                         rws::lifecycle::attest(w, &actual)?;
-                        rws::lifecycle::record(&path, w, actual)?;
+                        rws::lifecycle::record(&path, &config, w, actual)?;
                         println!("Existing volume verified and connected: {}", w.name);
                         return Ok(0);
                     } else {
@@ -776,7 +780,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             rws::lifecycle::attest(w, &actual).map_err(|e| {
                 format!("volume exists but verification failed: {e}; no ownership receipt saved")
             })?;
-            rws::lifecycle::record(&path, w, actual).map_err(|e| format!("volume is mounted, but its identity could not be saved: {e}; eject through Finder before reconnecting"))?;
+            rws::lifecycle::record(&path, &config, w, actual).map_err(|e| format!("volume is mounted, but its identity could not be saved: {e}; eject through Finder before reconnecting"))?;
             // SSHFS continues independently and exits when the OS unmounts its volume.
             println!("Mounted {} at {}", w.name, w.mount_root.display());
             eprintln!("SSHFS log: {}", log.display());
@@ -790,16 +794,16 @@ fn run(cli: Cli) -> Result<i32, String> {
             let _operation = if dry_run {
                 None
             } else {
-                Some(rws::lifecycle::lock(&path, w)?)
+                Some(rws::lifecycle::lock(&path, &config, w)?)
             };
             if !dry_run {
                 match rws::lifecycle::identity(&w.mount_root)? {
                     None => {
-                        rws::lifecycle::forget(&path, w)?;
+                        rws::lifecycle::forget(&path, &config, w)?;
                         println!("Already disconnected: {}", w.name);
                         return Ok(0);
                     },
-                    Some(actual) if rws::lifecycle::verified(&path, w, &actual) => {},
+                    Some(actual) if rws::lifecycle::verified(&path, &config, w, &actual) => {},
                     Some(_) => return Err("refusing to unmount a filesystem with an unverified identity; close your work and eject it through Finder".into()),
                 }
             }
@@ -816,7 +820,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                 if rws::lifecycle::identity(&w.mount_root)?.is_some() {
                     return Err("disconnect returned but the volume is still mounted".into());
                 }
-                rws::lifecycle::forget(&path, w)?;
+                rws::lifecycle::forget(&path, &config, w)?;
                 println!("Disconnected: {}. Remote files are preserved.", w.name);
             }
             Ok(code)

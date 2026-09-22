@@ -15,6 +15,8 @@ pub struct Config {
     pub workspaces: Vec<Workspace>,
     #[serde(default)]
     pub mount: MountOptions,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mount_state_generation: Option<String>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -33,6 +35,7 @@ impl Config {
                     version: 1,
                     workspaces: vec![],
                     mount: MountOptions::default(),
+                    mount_state_generation: None,
                 });
             }
             Err(e) => return Err(format!("read config: {e}")),
@@ -56,6 +59,9 @@ impl Config {
             return Err("unsupported config version".into());
         }
         config.mount.validate()?;
+        if let Some(generation) = &config.mount_state_generation {
+            validate_mount_state_generation(generation)?;
+        }
         // Loading must never resolve mount roots: canonicalizing a path under
         // a stalled SSHFS volume blocks in the kernel, which would hang every
         // command reading the configuration. Registration performs the
@@ -132,6 +138,16 @@ impl Config {
         Ok(())
     }
 }
+fn validate_mount_state_generation(generation: &str) -> Result<(), String> {
+    if generation.is_empty()
+        || !generation
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err("mount-state generation must contain only ASCII letters, digits, hyphens, or underscores".into());
+    }
+    Ok(())
+}
 impl MountOptions {
     fn validate(&self) -> Result<(), String> {
         if self
@@ -173,5 +189,18 @@ struct Lock(PathBuf);
 impl Drop for Lock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_an_unsafe_mount_state_generation() {
+        let result =
+            Config::parse(br#"{"version":1,"workspaces":[],"mount_state_generation":"../other"}"#);
+
+        assert!(matches!(result, Err(ref error) if error.contains("mount-state generation")));
     }
 }
