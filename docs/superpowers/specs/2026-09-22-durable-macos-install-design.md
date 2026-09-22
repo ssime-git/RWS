@@ -18,9 +18,11 @@ RWS uses the existing macOS default configuration location:
   releases/<release-id>/sshfs/sshfs
 ```
 
-`config.json` is the only mutable workspace registry. Its matching
-`config.json.mount-state/` directory is the verification state for that registry
-and migrates with it. `bin/rws` and the selected SSHFS executable are copies
+`config.json` is the only mutable workspace registry. It contains an opaque
+mount-state generation identifier. Receipts live in
+`mount-state/<generation>/`, and the configuration atomically selects their
+generation. Existing configurations without the identifier retain the legacy
+adjacent receipt directory until migrated. `bin/rws` and the selected SSHFS executable are copies
 managed by RWS. SSHFS is placed in an immutable release directory; the config
 records that release's absolute SSHFS path.
 Directories are mode 0700 and configuration, backups, receipts and logs are
@@ -32,9 +34,9 @@ mode 0600; executables are mode 0700.
 valid source configuration. It validates the source, resolves the *effective*
 SSHFS executable, copies the running executable and SSHFS executable into a new
 immutable release directory, validates both staged executables, then writes a
-copied configuration that references the final immutable release path. It copies
-matching mount receipts into the staged configuration state. It must not modify
-or delete the source configuration.
+copied configuration that references the final immutable release path and a new
+mount-state generation. It copies matching mount receipts into that staged
+generation. It must not modify or delete the source configuration.
 
 For the installed binary, the canonical configured SSHFS path wins over an
 inherited `RWS_SSHFS`; an override that points elsewhere is rejected with a
@@ -44,14 +46,15 @@ their paths are prerequisites, while the RWS-managed copy retains its source
 provenance and license alongside the executable.
 
 The command stages and validates the release, atomically replaces `bin/rws`,
-then atomically replaces `config.json` and its receipt directory as the final
-commit step. The config replacement is the single activation point: it never
-references an incomplete release, and every referenced release is retained. A
-crash before config replacement leaves the prior config and release active; a
-crash after it leaves a fully staged release selected. It keeps the immediately
-previous configuration, receipt state, and referenced release as bounded
-RWS-owned backups. A missing source config, non-regular executable, or failing
-copy leaves the canonical configuration untouched.
+then atomically replaces `config.json` as the final commit step. The config
+replacement is the single activation point: it selects both fully staged SSHFS
+and receipt generations, never references incomplete content, and every
+referenced generation is retained. A crash before config replacement leaves the
+prior config, receipt state, and release active; a crash after it leaves fully
+staged generations selected. It keeps the immediately previous configuration,
+receipt state, and referenced release as bounded RWS-owned backups. A missing
+source config, non-regular executable, or failing copy leaves the canonical
+configuration untouched.
 
 ## Login remounting
 
@@ -96,7 +99,8 @@ explicit refresh commands instead of silently editing shell or Delta files.
 ## Tests
 
 Automated tests cover canonical path selection, atomic migration output, SSHFS
-path rewriting, source-config and matching-receipt preservation, staged failure
+path rewriting, source-config and matching-receipt preservation, mount-state
+generation selection, staged failure
 rollback, executable mode validation, override rejection, a generic plist with
 no workspace/config path, legacy-agent ownership cleanup, and retry semantics.
 CLI tests cover missing source configuration, `install`, and aggregated
