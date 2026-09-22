@@ -18,23 +18,37 @@ RWS uses the existing macOS default configuration location:
   libexec/sshfs/sshfs
 ```
 
-`config.json` is the only mutable workspace registry. `bin/rws` and the
-selected SSHFS executable are copies managed by RWS; the config records the
-absolute path to the managed SSHFS copy. Files are installed through temporary
-files plus rename and use owner-only permissions where applicable.
+`config.json` is the only mutable workspace registry. Its matching
+`config.json.mount-state/` directory is the verification state for that registry
+and migrates with it. `bin/rws` and the selected SSHFS executable are copies
+managed by RWS; the config records the absolute path to the managed SSHFS copy.
+Directories are mode 0700 and configuration, backups, receipts and logs are
+mode 0600; executables are mode 0700.
 
 ## Commands and migration
 
-`rws install` receives the currently selected configuration (normally supplied
-with `--config` during the one-time migration). It validates that configuration,
-copies the running executable and its selected SSHFS executable into the
-canonical layout, rewrites the copied configuration to use the managed SSHFS
-path, then atomically installs it as the canonical configuration. It must not
-modify or delete the source configuration.
+`rws [--config SOURCE] install` is macOS-only and requires an existing,
+valid source configuration. It validates the source, resolves the *effective*
+SSHFS executable, copies the running executable and SSHFS executable into a
+new versioned staging directory, validates both staged executables, then writes
+a copied configuration that references staged SSHFS. It copies matching mount
+receipts into the staged configuration state. Only after all staging steps pass
+does it atomically switch the canonical configuration and managed-artifact
+pointer. It must not modify or delete the source configuration.
+
+For the installed binary, the canonical configured SSHFS path wins over an
+inherited `RWS_SSHFS`; an override that points elsewhere is rejected with a
+clear error rather than silently restoring a checkout dependency. The custom
+SSHFS executable remains dependent on installed macFUSE and GLib libraries;
+their paths are prerequisites, while the RWS-managed copy retains its source
+provenance and license alongside the executable.
 
 The command is idempotent: repeating it replaces only RWS-managed artifacts and
-the canonical configuration. Failure before the final rename leaves the previous
-canonical configuration usable.
+the canonical configuration. It keeps the immediately previous configuration,
+receipt state, and managed artifact version as bounded RWS-owned backups until
+the replacement is validated. Failure before activation leaves the previous
+canonical installation usable. A missing source config, non-regular executable,
+or failing copy leaves it untouched.
 
 ## Login remounting
 
@@ -46,11 +60,18 @@ canonical configuration usable.
 
 Its only RWS program argument is the managed binary followed by `autostart run`.
 It has no workspace name or configuration argument. At login, `autostart run`
-loads the canonical configuration and attempts every registered workspace with
-its configured mount backend. It succeeds only when all workspaces are mounted
-or already verified; otherwise its nonzero exit causes Launchd to retry after 30
-seconds. This makes later workspace changes effective without regenerating the
-plist.
+uses `load_existing` for the canonical configuration and attempts every
+registered workspace with its configured mount backend. It succeeds only when
+all workspaces are mounted or already verified; otherwise it attempts the
+remaining workspaces, returns nonzero, and Launchd retries after 30 seconds.
+Missing or corrupt canonical state is a nonzero error, never an empty success.
+This makes later workspace changes effective without regenerating the plist.
+
+During installation, RWS removes only legacy plist files matching its exact
+owned label/path pattern `io.rws.mount.<validated-workspace>.plist`; it first
+asks `launchctl bootout` to unload each one and warns if unloading is unavailable.
+It never deletes other LaunchAgents. This cleanup occurs only after the generic
+agent is written and validated.
 
 ## Integrations
 
@@ -72,7 +93,9 @@ explicit refresh commands instead of silently editing shell or Delta files.
 ## Tests
 
 Automated tests cover canonical path selection, atomic migration output, SSHFS
-path rewriting, preservation of the source config, a generic plist with no
-workspace/config path, and retry semantics. CLI tests cover `install` and
-`autostart run` with temporary directories and a fake mount command boundary;
-they do not claim live macFUSE mounts.
+path rewriting, source-config and matching-receipt preservation, staged failure
+rollback, executable mode validation, override rejection, a generic plist with
+no workspace/config path, legacy-agent ownership cleanup, and retry semantics.
+CLI tests cover missing source configuration, `install`, and aggregated
+`autostart run` failures with temporary directories and a fake mount command
+boundary; they do not claim live macFUSE mounts.
