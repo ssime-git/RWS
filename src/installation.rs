@@ -147,14 +147,14 @@ pub fn select_sshfs(config_path: &Path, config: &Config) -> Result<PathBuf, Stri
         .unwrap_or_else(|| PathBuf::from("sshfs"));
     let inherited = std::env::var_os("RWS_SSHFS").map(PathBuf::from);
     if is_canonical_config(config_path) {
-        if let Some(inherited) = inherited {
-            if inherited != configured {
-                return Err(format!(
-                    "RWS_SSHFS={} conflicts with the canonical configured SSHFS {}; unset RWS_SSHFS or use the managed configuration",
-                    inherited.display(),
-                    configured.display()
-                ));
-            }
+        if let Some(inherited) = inherited
+            && inherited != configured
+        {
+            return Err(format!(
+                "RWS_SSHFS={} conflicts with the canonical configured SSHFS {}; unset RWS_SSHFS or use the managed configuration",
+                inherited.display(),
+                configured.display()
+            ));
         }
         return Ok(configured);
     }
