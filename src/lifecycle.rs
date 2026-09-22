@@ -205,19 +205,62 @@ struct Receipt {
     identity: MountIdentity,
 }
 fn receipt_path(config_path: &Path, config: &Config, workspace: &Workspace) -> PathBuf {
-    if let Some(generation) = &config.mount_state_generation {
-        return config_path
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-            .unwrap_or(Path::new("."))
-            .join("mount-state")
-            .join(generation)
-            .join(format!("{}.json", workspace.name));
+    if let Some(directory) = generated_state_directory(config_path, config) {
+        return directory.join(format!("{}.json", workspace.name));
     }
     // Keep legacy receipts separate for separate config files in the same directory.
     let mut directory = config_path.as_os_str().to_os_string();
     directory.push(".mount-state");
     PathBuf::from(directory).join(format!("{}.json", workspace.name))
+}
+
+fn generated_state_directory(config_path: &Path, config: &Config) -> Option<PathBuf> {
+    let generation = config.mount_state_generation.as_ref()?;
+    let parent = config_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    Some(
+        parent
+            .join("mount-state")
+            .join(generation)
+            .join(config_namespace(config_path)),
+    )
+}
+
+fn config_namespace(config_path: &Path) -> String {
+    let name = config_path
+        .file_name()
+        .unwrap_or(config_path.as_os_str())
+        .as_encoded_bytes();
+    let mut namespace = String::from("config-");
+    for byte in name {
+        namespace.push_str(&format!("{byte:02x}"));
+    }
+    namespace
+}
+
+fn create_receipt_directory(
+    config_path: &Path,
+    config: &Config,
+    receipt: &Path,
+) -> Result<(), String> {
+    let directory = receipt.parent().unwrap();
+    fs::create_dir_all(directory).map_err(|e| e.to_string())?;
+    if let Some(state) = generated_state_directory(config_path, config) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let root = state.ancestors().nth(2).unwrap();
+            let generation = root.join(config.mount_state_generation.as_ref().unwrap());
+            for directory in [root, generation.as_path(), state.as_path()] {
+                fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    Ok(())
 }
 pub struct OperationLock(PathBuf);
 impl Drop for OperationLock {
@@ -228,7 +271,7 @@ impl Drop for OperationLock {
 pub fn lock(config_path: &Path, config: &Config, w: &Workspace) -> Result<OperationLock, String> {
     use std::{io::Write, os::unix::fs::OpenOptionsExt};
     let path = receipt_path(config_path, config, w).with_extension("lock");
-    fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    create_receipt_directory(config_path, config, &path)?;
     let mut file = fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(&path)
         .map_err(|e| format!("operation lock {}: {e}; another operation may be active; inspect stale locks after a crash", path.display()))?;
     let guard = OperationLock(path);
@@ -243,7 +286,7 @@ pub fn record(
 ) -> Result<(), String> {
     use std::{io::Write, os::unix::fs::OpenOptionsExt};
     let path = receipt_path(config_path, config, w);
-    fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    create_receipt_directory(config_path, config, &path)?;
     let temp = path.with_extension(format!("{}.tmp", std::process::id()));
     let mut file = fs::OpenOptions::new()
         .create_new(true)
@@ -548,6 +591,7 @@ mod tests {
             .path()
             .join("mount-state")
             .join("release-20260922")
+            .join("config-636f6e6669672e6a736f6e")
             .join("demo.json");
         let identity = MountIdentity {
             source: "macfuse://unique".into(),
@@ -561,6 +605,7 @@ mod tests {
             temp.path()
                 .join("mount-state")
                 .join("release-20260922")
+                .join("config-636f6e6669672e6a736f6e")
                 .join("demo.lock")
                 .exists()
         );
@@ -596,5 +641,79 @@ mod tests {
                 .join("config.json.mount-state")
                 .join("demo.json")
         );
+    }
+
+    #[test]
+    fn durable_configs_in_the_same_directory_do_not_share_receipts_or_locks() {
+        let temp = tempfile::tempdir().unwrap();
+        let first_path = temp.path().join("first.json");
+        let second_path = temp.path().join("second.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: Some("release-20260922".into()),
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+        let identity = MountIdentity {
+            source: "macfuse://unique".into(),
+            filesystem: "macfuse".into(),
+            id: vec![1],
+        };
+
+        let first_receipt = receipt_path(&first_path, &config, &workspace);
+        let second_receipt = receipt_path(&second_path, &config, &workspace);
+        assert_ne!(first_receipt, second_receipt);
+        record(&first_path, &config, &workspace, identity.clone()).unwrap();
+        assert!(verified(&first_path, &config, &workspace, &identity));
+        assert!(!verified(&second_path, &config, &workspace, &identity));
+
+        let _first_lock = lock(&first_path, &config, &workspace).unwrap();
+        let _second_lock = lock(&second_path, &config, &workspace).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generated_mount_state_directory_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_state_generation: Some("release-20260922".into()),
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: "/Volumes/RWS-demo".into(),
+        };
+        let identity = MountIdentity {
+            source: "macfuse://unique".into(),
+            filesystem: "macfuse".into(),
+            id: vec![1],
+        };
+
+        record(&config_path, &config, &workspace, identity).unwrap();
+        let receipt = receipt_path(&config_path, &config, &workspace);
+        let namespace = receipt.parent().unwrap();
+        for directory in [
+            namespace,
+            namespace.parent().unwrap(),
+            namespace.parent().unwrap().parent().unwrap(),
+        ] {
+            assert_eq!(
+                fs::metadata(directory).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
     }
 }
