@@ -108,6 +108,55 @@ If macFUSE entries are absent, an upstream workaround adds them and restarts `fs
 
 Keep the agreed temporary grant active through the entire approved diagnosis/repair/verification sequence; do not revoke it between a read and the immediately following approved repair. If macOS requires a terminal restart for the grant to take effect, arrange it with the user before retrying. Run repair helpers as the logged-in user; scope sudo to a service restart rather than running the whole helper as root. Remove any grant added for troubleshooting after its final required step. macOS may retain Full Disk Access in a running terminal until it quits: an OFF switch alone does not prove effective revocation. Preserve the user's output and active work, then arrange and verify the required quit/reopen. If deferred, report the remaining grant lifetime explicitly. Never claim full setup success before real mount/edit/unmount checks pass.
 
+## 6. Terminal and Delta integration
+
+After an active RWS configuration and a verified mount exist, offer the user's
+interactive zsh integration. With authorization to edit the user's zsh startup
+file, run the built RWS binary using its absolute path and bake in the active
+private config:
+
+```sh
+/absolute/path/to/rws --config /absolute/path/to/setup.json hook install
+```
+
+`hook install` manages only its marked `# RWS auto-shell hook` line in
+`~/.zshrc` (or `$ZDOTDIR/.zshrc`); it preserves all other content and replaces
+only its own prior line. Do not assume that building RWS, mounting a volume, or
+installing the macOS app has installed this hook. Use a durable binary/config
+location: the hook should not point at a disposable build or temporary setup
+directory.
+
+In a *new* interactive zsh (or after the user explicitly sources the startup
+file), entering a verified mounted workspace by `cd` or starting the terminal
+there must prompt once per workspace: `RWS: switch to <host> (<workspace>)?
+[Y/n]`. Enter/Y opens `rws shell` at the mapped remote path; `n` leaves that
+shell local. `exit` returns to the local zsh. `RWS_AUTO_MODE=remote` and
+`RWS_AUTO_MODE=local` are deliberate automation overrides. Noninteractive
+processes, non-zsh shells and IDE-internal subprocesses must remain untouched.
+Do not claim this is a transparent process redirector.
+
+If the user wants Delta integration, install the global managed rules separately
+with the same absolute binary and config, normally:
+
+```sh
+/absolute/path/to/rws --config /absolute/path/to/setup.json delta-rules \
+  --output "$HOME/.config/delta/AGENT.md"
+```
+
+This guides Delta agents to use `rws context` and `rws exec`; it does not
+redirect Delta preparation, native Git operations, or arbitrary local
+processes. Delta's interactive integrated terminal does load login zsh, so it
+uses the zsh hook when its working directory is a verified mount. Mount the
+workspace before adding its existing checkout to Delta. Validate an accepted
+prompt in a real terminal with `uname -s`, `hostname` and `pwd`; if terminal UI
+automation cannot safely exercise this, record it as unverified rather than
+simulating it in a non-TTY shell.
+
 ## Completion record
 
-Report: versions; build/test result; SSH/shell result; mount/edit/unmount result; screenshot locations; retained test data; temporary-permission final state; unresolved OS blockers. Continue useful independent steps, but label every unverified capability. Update the setup notes when new evidence changes the procedure.
+Report: versions; build/test result; SSH/shell result; mount/edit/unmount result;
+zsh-hook installation and real-terminal result; Delta-rules installation and
+Delta-terminal result; screenshot locations; retained test data;
+temporary-permission final state; unresolved OS blockers. Continue useful
+independent steps, but label every unverified capability. Update the setup notes
+when new evidence changes the procedure.
