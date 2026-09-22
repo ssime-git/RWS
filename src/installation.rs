@@ -32,6 +32,21 @@ impl Layout {
         self.root.join("config.json")
     }
 
+    /// Stable path used by integrations such as the login LaunchAgent.
+    pub fn binary(&self) -> PathBuf {
+        self.root.join("bin/rws")
+    }
+
+    pub fn require_binary(&self) -> Result<PathBuf, String> {
+        let binary = self.binary();
+        validate_executable(&binary, "managed RWS binary")?;
+        Ok(binary)
+    }
+
+    fn bin(&self) -> PathBuf {
+        self.root.join("bin")
+    }
+
     fn releases(&self) -> PathBuf {
         self.root.join("releases")
     }
@@ -63,16 +78,23 @@ pub fn install(
     validate_executable(rws, "RWS")?;
     validate_executable(sshfs, "SSHFS")?;
     prepare_private_directory(&layout.root)?;
+    prepare_private_directory(&layout.bin())?;
     prepare_private_directory(&layout.releases())?;
     prepare_private_directory(&layout.mount_state())?;
 
     let generation = new_generation();
     let release = layout.releases().join(&generation);
     create_fresh_private_directory(&release)?;
-    let staged_rws = release.join("rws");
-    let staged_sshfs = release.join("sshfs");
+    let staged_rws = layout
+        .binary()
+        .with_extension(format!("{}.tmp", std::process::id()));
+    let staged_sshfs_directory = release.join("sshfs");
+    create_fresh_private_directory(&staged_sshfs_directory)?;
+    let staged_sshfs = staged_sshfs_directory.join("sshfs");
     copy_executable(rws, &staged_rws)?;
     copy_executable(sshfs, &staged_sshfs)?;
+    validate_executable(&staged_rws, "staged RWS")?;
+    validate_executable(&staged_sshfs, "staged SSHFS")?;
 
     let mut activated = source;
     activated.mount.sshfs = Some(path_string(&staged_sshfs)?);
@@ -83,13 +105,22 @@ pub fn install(
     create_fresh_private_directory(&destination_state)?;
     migrate_receipts(&source_receipts, &activated, &destination_state)?;
 
+    // Replace the stable integration target before activating the new config.
+    // The config replacement below remains the sole activation point.
+    fs::rename(&staged_rws, layout.binary()).map_err(|e| {
+        format!(
+            "activate managed RWS executable {}: {e}",
+            layout.binary().display()
+        )
+    })?;
+
     // This is deliberately the final write: an unsuccessful install leaves
     // the old config and its release untouched, while an old release is never
     // removed by a later successful installation.
     write_config_atomically(&layout.config_path(), &activated)?;
     Ok(Installation {
         release,
-        rws: staged_rws,
+        rws: layout.binary(),
         sshfs: staged_sshfs,
         generation,
     })
@@ -349,6 +380,8 @@ mod tests {
             active.mount_state_generation.as_deref(),
             Some(installed.generation.as_str())
         );
+        assert_eq!(installed.rws, layout.binary());
+        assert_eq!(installed.sshfs, installed.release.join("sshfs/sshfs"));
         assert!(installed.rws.is_file());
         assert!(installed.sshfs.is_file());
         assert_eq!(

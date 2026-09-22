@@ -19,6 +19,8 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Action {
+    /// Copy this configuration and its executables into durable macOS state.
+    Install,
     /// Describe whether a filesystem directory belongs to a verified RWS mount.
     Context {
         #[arg(long)]
@@ -151,11 +153,13 @@ enum HookAction {
 }
 #[derive(Subcommand)]
 enum AutostartAction {
-    /// Write one LaunchAgent per registered workspace. Load it with launchctl or log in again.
+    /// Write the generic LaunchAgent for the durable installation.
     Install {
         #[arg(long)]
         directory: Option<PathBuf>,
     },
+    /// Mount every workspace from the canonical durable configuration.
+    Run,
 }
 #[derive(Subcommand)]
 enum WorkspaceAction {
@@ -187,6 +191,66 @@ fn default_config() -> Result<PathBuf, String> {
         ".config/rws"
     };
     Ok(PathBuf::from(home).join(base).join("config.json"))
+}
+fn canonical_layout() -> Result<rws::installation::Layout, String> {
+    let home = std::env::var_os("HOME").ok_or("HOME is unset")?;
+    Ok(rws::installation::Layout::macos(std::path::Path::new(
+        &home,
+    )))
+}
+
+fn install_autostart(directory: Option<PathBuf>) -> Result<i32, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("autostart is supported on macOS only".into());
+    }
+    let layout = canonical_layout()?;
+    let binary = layout.require_binary()?;
+    let config_path = layout.config_path();
+    let config = Config::load_existing(&config_path)?;
+    let home = std::env::var_os("HOME").ok_or("HOME is unset; supply --directory")?;
+    let directory = directory.unwrap_or_else(|| PathBuf::from(home).join("Library/LaunchAgents"));
+    let paths = rws::autostart::install(&directory, &binary, &config_path, &config.workspaces)?;
+    for path in paths {
+        println!("Installed {}", path.display());
+    }
+    println!(
+        "LaunchAgents retry only failed mounts every 30 seconds; successful mounts are not restarted."
+    );
+    Ok(0)
+}
+
+fn run_autostart() -> Result<i32, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("autostart is supported on macOS only".into());
+    }
+    let path = canonical_layout()?.config_path();
+    let config = Config::load_existing(&path)?;
+    let mut failures = Vec::new();
+    for workspace in &config.workspaces {
+        match run(Cli {
+            config: Some(path.clone()),
+            command: Action::Mount {
+                workspace: workspace.name.clone(),
+                verify_existing: false,
+                repair: false,
+                dry_run: false,
+                fskit: false,
+                raw_names: false,
+            },
+        }) {
+            Ok(0) => {}
+            Ok(code) => failures.push(format!("{} (exit {code})", workspace.name)),
+            Err(error) => failures.push(format!("{}: {error}", workspace.name)),
+        }
+    }
+    if failures.is_empty() {
+        Ok(0)
+    } else {
+        Err(format!(
+            "autostart could not mount: {}",
+            failures.join("; ")
+        ))
+    }
 }
 fn resolve(config: &Config, name: Option<&str>) -> Result<(Workspace, String), String> {
     if let Some(name) = name {
@@ -316,6 +380,29 @@ fn run(cli: Cli) -> Result<i32, String> {
         println!("Registered {name}");
         return Ok(0);
     }
+    match &cli.command {
+        Action::Autostart {
+            action: AutostartAction::Install { directory },
+        } => {
+            if explicit_config {
+                return Err(
+                    "autostart uses the canonical installation; --config is not allowed".into(),
+                );
+            }
+            return install_autostart(directory.clone());
+        }
+        Action::Autostart {
+            action: AutostartAction::Run,
+        } => {
+            if explicit_config {
+                return Err(
+                    "autostart run uses the canonical installation; --config is not allowed".into(),
+                );
+            }
+            return run_autostart();
+        }
+        _ => {}
+    }
     let strict_routing = matches!(
         &cli.command,
         Action::Context { .. }
@@ -332,6 +419,26 @@ fn run(cli: Cli) -> Result<i32, String> {
         Config::load(&path)?
     };
     match cli.command {
+        Action::Install => {
+            if !cfg!(target_os = "macos") {
+                return Err("install is supported on macOS only".into());
+            }
+            let layout = canonical_layout()?;
+            let installed = rws::installation::install_current(&layout, &path)?;
+            println!(
+                "Installed durable RWS at {}",
+                layout.config_path().display()
+            );
+            println!(
+                "Refresh shell integration manually: {} hook install",
+                installed.rws.display()
+            );
+            println!(
+                "Refresh Delta rules manually: {} delta-rules --if-installed",
+                installed.rws.display()
+            );
+            Ok(0)
+        }
         Action::DeltaRules {
             output,
             if_installed,
@@ -358,29 +465,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             );
             Ok(0)
         }
-        Action::Autostart {
-            action: AutostartAction::Install { directory },
-        } => {
-            if !cfg!(target_os = "macos") {
-                return Err("autostart is supported on macOS only".into());
-            }
-            let home = std::env::var_os("HOME").ok_or("HOME is unset; supply --directory")?;
-            let directory =
-                directory.unwrap_or_else(|| PathBuf::from(home).join("Library/LaunchAgents"));
-            let binary = std::env::current_exe().map_err(|e| e.to_string())?;
-            let config_path = path
-                .canonicalize()
-                .map_err(|e| format!("config path: {e}"))?;
-            let paths =
-                rws::autostart::install(&directory, &binary, &config_path, &config.workspaces)?;
-            for p in paths {
-                println!("Installed {}", p.display());
-            }
-            println!(
-                "LaunchAgents retry only failed mounts every 30 seconds; successful mounts are not restarted."
-            );
-            Ok(0)
-        }
+        Action::Autostart { .. } => unreachable!(),
         Action::Context { cwd } => {
             let cwd = match cwd {
                 Some(p) => p,
