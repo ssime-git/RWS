@@ -112,6 +112,8 @@ enum Action {
     #[command(name = "connect", visible_alias = "mount")]
     Mount {
         workspace: String,
+        #[arg(long, hide = true)]
+        if_desired: bool,
         /// Verify and adopt an existing volume using a disposable remote file.
         #[arg(long)]
         verify_existing: bool,
@@ -245,7 +247,7 @@ fn install_autostart(directory: Option<PathBuf>) -> Result<i32, String> {
         println!("Installed {}", path.display());
     }
     println!(
-        "LaunchAgents retry only failed mounts every 30 seconds; successful mounts are not restarted."
+        "LaunchAgents check desired connections every 30 seconds. Paused workspaces are skipped; healthy mounts are left connected."
     );
     Ok(0)
 }
@@ -261,17 +263,21 @@ fn run_autostart() -> Result<i32, String> {
         failures.push(format!("integration refresh: {error}"));
     }
     for workspace in &config.workspaces {
-        match run(Cli {
-            config: Some(path.clone()),
-            command: Action::Mount {
-                workspace: workspace.name.clone(),
-                verify_existing: false,
-                repair: false,
-                dry_run: false,
-                fskit: false,
-                raw_names: false,
+        match run_with_origin(
+            Cli {
+                config: Some(path.clone()),
+                command: Action::Mount {
+                    workspace: workspace.name.clone(),
+                    if_desired: true,
+                    verify_existing: false,
+                    repair: false,
+                    dry_run: false,
+                    fskit: false,
+                    raw_names: false,
+                },
             },
-        }) {
+            OperationOrigin::Automatic,
+        ) {
             Ok(0) => {}
             Ok(code) => failures.push(format!("{} (exit {code})", workspace.name)),
             Err(error) => failures.push(format!("{}: {error}", workspace.name)),
@@ -329,6 +335,30 @@ fn mount_health_status(name: &str, health: Result<(), String>) -> (String, bool)
             ),
             true,
         ),
+    }
+}
+
+/// Returns true only after repairing an unhealthy mount, permitting reconnect.
+/// A healthy mount is a terminal no-op; neither ejection nor reconnect is needed.
+fn reconcile_verified_mount(
+    name: &str,
+    health: Result<(), String>,
+    repair: bool,
+    eject: impl FnOnce(String) -> Result<(), String>,
+) -> Result<bool, String> {
+    match (health, repair) {
+        (Ok(()), false) => Ok(false),
+        (Ok(()), true) => Err(
+            "mount answers normally; nothing to repair. Use disconnect to unmount deliberately"
+                .into(),
+        ),
+        (Err(reason), false) => Err(format!(
+            "mount is unresponsive ({reason}). Close files using the volume, then run: rws connect {name} --repair. Unsaved writes on the dead mount may be lost"
+        )),
+        (Err(reason), true) => {
+            eject(reason)?;
+            Ok(true)
+        }
     }
 }
 fn sshfs_program(config_path: &std::path::Path, config: &Config) -> Result<String, String> {
@@ -405,11 +435,37 @@ fn ssh_args(host: &str, script: String, tty: bool) -> Vec<String> {
         script,
     ]
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OperationOrigin {
+    Explicit,
+    Automatic,
+}
 fn run(cli: Cli) -> Result<i32, String> {
+    run_with_origin(cli, OperationOrigin::Explicit)
+}
+fn run_with_origin(cli: Cli, origin: OperationOrigin) -> Result<i32, String> {
+    let origin = if matches!(
+        &cli.command,
+        Action::Mount {
+            if_desired: true,
+            ..
+        }
+    ) {
+        OperationOrigin::Automatic
+    } else {
+        origin
+    };
     let explicit_config = cli.config.is_some();
     let path = match cli.config {
         Some(p) => p,
         None => default_config()?,
+    };
+    // Configuration aliases must share receipts, locks, and desired state with
+    // the canonical runner; atomic writes must not replace the alias itself.
+    let path = match path.canonicalize() {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => path,
+        Err(error) => return Err(format!("resolve configuration: {error}")),
     };
     if let Action::Workspace {
         action:
@@ -502,13 +558,81 @@ fn run(cli: Cli) -> Result<i32, String> {
     } else {
         Config::load(&path)?
     };
-    match cli.command {
+    match &cli.command {
+        Action::Mount {
+            workspace,
+            dry_run: false,
+            ..
+        }
+        | Action::Unmount {
+            workspace,
+            dry_run: false,
+        } => {
+            let disconnect = matches!(&cli.command, Action::Unmount { .. });
+            let workspace = workspace.clone();
+            return with_mount_intent(&path, &config, &workspace, disconnect, origin, |config| {
+                execute_action(cli.command, &path, config, explicit_config)
+            });
+        }
+        _ => (),
+    }
+    execute_action(cli.command, &path, config, explicit_config)
+}
+
+fn with_mount_intent(
+    path: &std::path::Path,
+    snapshot: &Config,
+    workspace: &str,
+    disconnect: bool,
+    origin: OperationOrigin,
+    execute: impl FnOnce(Config) -> Result<i32, String>,
+) -> Result<i32, String> {
+    // The lock spans the fresh read, intent write, and the OS operation.
+    let pause_error = |error| {
+        if disconnect {
+            format!("{error}; auto-reconnect has NOT been paused; retry disconnect")
+        } else {
+            error
+        }
+    };
+    let _operation =
+        rws::lifecycle::lock(path, snapshot, snapshot.find(workspace)?).map_err(pause_error)?;
+    let mut config = Config::load_existing(path).map_err(pause_error)?;
+    config.find(workspace)?;
+    if origin == OperationOrigin::Automatic
+        && config.mount_intent(workspace) == rws::config::MountIntent::Paused
+    {
+        println!("Auto-reconnect paused: {workspace}");
+        return Ok(0);
+    }
+    if origin == OperationOrigin::Explicit {
+        let intent = if disconnect {
+            rws::config::MountIntent::Paused
+        } else {
+            rws::config::MountIntent::Connected
+        };
+        Config::set_mount_intent(path, workspace, intent).map_err(pause_error)?;
+        config = Config::load_existing(path)?;
+        if disconnect {
+            println!("Auto-reconnect paused: {workspace}");
+        }
+    }
+    execute(config)
+}
+
+fn execute_action(
+    command: Action,
+    path: &std::path::Path,
+    config: Config,
+    explicit_config: bool,
+) -> Result<i32, String> {
+    match command {
         Action::Install { skip_integrations } => {
             if !cfg!(target_os = "macos") {
                 return Err("install is supported on macOS only".into());
             }
             let layout = canonical_layout()?;
-            let installed = rws::installation::install_current(&layout, &path)?;
+            let installed = rws::installation::install_current(&layout, path)?;
             maintenance::refresh_launch_agent()?;
             println!(
                 "Installed durable RWS at {}",
@@ -562,7 +686,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             match rws::routing::resolve_directory(&config, &cwd)? {
                 None => println!("{}", serde_json::json!({"mode":"local","cwd":cwd})),
                 Some((w, remote)) => {
-                    require_verified_mount(&path, &config, &w)?;
+                    require_verified_mount(path, &config, &w)?;
                     println!(
                         "{}",
                         serde_json::json!({"mode":"remote","workspace":w.name,"host":w.host,"cwd":cwd,"remote_cwd":remote,"mount_verified":true})
@@ -579,7 +703,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             if let Some(backend) = backend {
                 options.fskit = matches!(backend, Backend::Fskit);
             }
-            Config::set_mount_options(&path, options)?;
+            Config::set_mount_options(path, options)?;
             println!("Mount settings saved in {}", path.display());
             Ok(0)
         }
@@ -588,7 +712,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             directory,
         } => {
             config.find(&workspace)?;
-            rws::shortcuts::create(&path, &workspace, &directory)?;
+            rws::shortcuts::create(path, &workspace, &directory)?;
             println!("Shortcuts created in {}", directory.display());
             Ok(0)
         }
@@ -604,7 +728,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             for w in selected {
                 let state = match rws::lifecycle::identity(&w.mount_root) {
                     Ok(None) => "disconnected".to_string(),
-                    Ok(Some(ref actual)) if rws::lifecycle::verified(&path, &config, w, actual) => {
+                    Ok(Some(ref actual)) if rws::lifecycle::verified(path, &config, w, actual) => {
                         let (state, unhealthy) = mount_health_status(
                             &w.name,
                             rws::lifecycle::probe_health(
@@ -630,6 +754,13 @@ fn run(cli: Cli) -> Result<i32, String> {
                     w.host,
                     w.remote_root,
                     w.mount_root.display()
+                );
+                println!(
+                    "  Auto-reconnect: {}",
+                    match config.mount_intent(&w.name) {
+                        rws::config::MountIntent::Connected => "connected",
+                        rws::config::MountIntent::Paused => "paused",
+                    }
                 );
                 if !no_probe {
                     let mut command = Command::new("ssh");
@@ -688,7 +819,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                     "directory is not in a registered RWS workspace; refusing local fallback",
                 )?;
                 if !dry_run {
-                    require_verified_mount(&path, &config, &selected.0)?;
+                    require_verified_mount(path, &config, &selected.0)?;
                 }
                 selected
             } else {
@@ -728,7 +859,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                         "directory is not in a registered RWS workspace; refusing local fallback",
                     )?;
                     if !dry_run {
-                        require_verified_mount(&path, &config, &selected.0)?;
+                        require_verified_mount(path, &config, &selected.0)?;
                     }
                     selected
                 }
@@ -743,7 +874,7 @@ fn run(cli: Cli) -> Result<i32, String> {
         Action::Hook { action } => {
             let binary = std::env::current_exe().map_err(|e| e.to_string())?;
             // Bake an absolute path: the snippet runs from arbitrary directories.
-            let absolute = std::path::absolute(&path).map_err(|e| e.to_string())?;
+            let absolute = std::path::absolute(path).map_err(|e| e.to_string())?;
             let baked = explicit_config.then_some(absolute.as_path());
             match action {
                 HookAction::Zsh => {
@@ -809,6 +940,7 @@ fn run(cli: Cli) -> Result<i32, String> {
         }
         Action::Mount {
             workspace,
+            if_desired: _,
             verify_existing,
             repair,
             dry_run,
@@ -820,43 +952,22 @@ fn run(cli: Cli) -> Result<i32, String> {
             if !cfg!(target_os = "macos") {
                 return Err("mount is currently supported on macOS only".into());
             }
-            let program = sshfs_program(&path, &config)?;
+            let program = sshfs_program(path, &config)?;
             if fskit && w.mount_root.parent() != Some(std::path::Path::new("/Volumes")) {
                 return Err("FSKit requires a mount point directly under /Volumes".into());
             }
-            let _operation = if dry_run {
-                None
-            } else {
-                Some(rws::lifecycle::lock(&path, &config, w)?)
-            };
             if !dry_run {
                 if let Some(actual) = rws::lifecycle::identity(&w.mount_root)? {
-                    if rws::lifecycle::verified(&path, &config, w, &actual) {
+                    if rws::lifecycle::verified(path, &config, w, &actual) {
                         let health = rws::lifecycle::probe_health(
                             &w.mount_root,
                             std::time::Duration::from_secs(4),
                         );
-                        match (health, repair) {
-                            (Ok(()), false) => {
-                                println!(
-                                    "Already connected: {} at {}",
-                                    w.name,
-                                    w.mount_root.display()
-                                );
-                                return Ok(0);
-                            }
-                            (Ok(()), true) => {
-                                return Err(
-                                    "mount answers normally; nothing to repair. Use disconnect to unmount deliberately".into(),
-                                );
-                            }
-                            (Err(reason), false) => {
-                                return Err(format!(
-                                    "mount is unresponsive ({reason}). Close files using the volume, then run: rws connect {} --repair. Unsaved writes on the dead mount may be lost",
-                                    w.name
-                                ));
-                            }
-                            (Err(reason), true) => {
+                        let reconnect = reconcile_verified_mount(
+                            &w.name,
+                            health,
+                            repair,
+                            |reason| {
                                 eprintln!(
                                     "Unresponsive mount ({reason}); ejecting {} before remounting.",
                                     w.mount_root.display()
@@ -876,7 +987,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                                         "forced ejection failed; the volume is still mounted. Close programs using it and retry".into(),
                                     );
                                 }
-                                rws::lifecycle::forget(&path, &config, w)?;
+                                rws::lifecycle::forget(path, &config, w)?;
                                 // The dead volume's SSHFS server can outlive
                                 // the ejection and wedge the next mount.
                                 let ended = rws::lifecycle::terminate_stale_servers(
@@ -897,19 +1008,27 @@ fn run(cli: Cli) -> Result<i32, String> {
                                         "{reason}; the FSKit service appears wedged, so mounting again would hang. Run: sudo pkill -9 fskitd (launchd restarts it), then retry; reboot as the fallback"
                                     )
                                 })?;
-                                // Fall through to the normal mount sequence below.
-                            }
+                                Ok(())
+                            },
+                        )?;
+                        if !reconnect {
+                            println!(
+                                "Already connected: {} at {}",
+                                w.name,
+                                w.mount_root.display()
+                            );
+                            return Ok(0);
                         }
                     } else if verify_existing {
                         rws::lifecycle::attest(w, &actual)?;
-                        rws::lifecycle::record(&path, &config, w, actual)?;
+                        rws::lifecycle::record(path, &config, w, actual)?;
                         println!("Existing volume verified and connected: {}", w.name);
                         return Ok(0);
                     } else {
                         return Err("a filesystem is already mounted here, but its identity is unverified; leaving it untouched. Use connect NAME --verify-existing to verify it against SSH without disconnecting".into());
                     }
                 }
-                let version = check_sshfs(&path, &config)?;
+                let version = check_sshfs(path, &config)?;
                 if fskit && !raw_names && !version.contains("3.7.5-rws-fskit3") {
                     return Err("FSKit Unicode support requires the RWS SSHFS build: run scripts/build-sshfs-fskit.sh and set RWS_SSHFS to its output. Use --raw-names only for intentional unconverted filename access".into());
                 }
@@ -980,7 +1099,7 @@ fn run(cli: Cli) -> Result<i32, String> {
             rws::lifecycle::attest(w, &actual).map_err(|e| {
                 format!("volume exists but verification failed: {e}; no ownership receipt saved")
             })?;
-            rws::lifecycle::record(&path, &config, w, actual).map_err(|e| format!("volume is mounted, but its identity could not be saved: {e}; eject through Finder before reconnecting"))?;
+            rws::lifecycle::record(path, &config, w, actual).map_err(|e| format!("volume is mounted, but its identity could not be saved: {e}; eject through Finder before reconnecting"))?;
             // SSHFS continues independently and exits when the OS unmounts its volume.
             println!("Mounted {} at {}", w.name, w.mount_root.display());
             eprintln!("SSHFS log: {}", log.display());
@@ -991,19 +1110,14 @@ fn run(cli: Cli) -> Result<i32, String> {
             if !cfg!(target_os = "macos") {
                 return Err("unmount is currently supported on macOS only".into());
             }
-            let _operation = if dry_run {
-                None
-            } else {
-                Some(rws::lifecycle::lock(&path, &config, w)?)
-            };
             if !dry_run {
                 match rws::lifecycle::identity(&w.mount_root)? {
                     None => {
-                        rws::lifecycle::forget(&path, &config, w)?;
+                        rws::lifecycle::forget(path, &config, w)?;
                         println!("Already disconnected: {}", w.name);
                         return Ok(0);
                     },
-                    Some(actual) if rws::lifecycle::verified(&path, &config, w, &actual) => {},
+                    Some(actual) if rws::lifecycle::verified(path, &config, w, &actual) => {},
                     Some(_) => return Err("refusing to unmount a filesystem with an unverified identity; close your work and eject it through Finder".into()),
                 }
             }
@@ -1020,7 +1134,7 @@ fn run(cli: Cli) -> Result<i32, String> {
                 if rws::lifecycle::identity(&w.mount_root)?.is_some() {
                     return Err("disconnect returned but the volume is still mounted".into());
                 }
-                rws::lifecycle::forget(&path, &config, w)?;
+                rws::lifecycle::forget(path, &config, w)?;
                 println!("Disconnected: {}. Remote files are preserved.", w.name);
             }
             Ok(code)
@@ -1031,6 +1145,305 @@ fn run(cli: Cli) -> Result<i32, String> {
 
 #[cfg(test)]
 mod maintenance_status_tests {
+    use super::*;
+
+    #[test]
+    fn healthy_verified_automatic_mount_never_ejects_or_reconnects() {
+        let reconnect = reconcile_verified_mount("demo", Ok(()), false, |_| {
+            panic!("healthy automatic pass must never eject the existing mount")
+        })
+        .unwrap();
+        assert!(
+            !reconnect,
+            "healthy existing mount must not start a new mount"
+        );
+    }
+
+    #[test]
+    fn healthy_verified_explicit_repair_refuses_without_ejection() {
+        let error = reconcile_verified_mount("demo", Ok(()), true, |_| {
+            panic!("healthy explicit repair must never eject the existing mount")
+        })
+        .unwrap_err();
+        assert!(error.contains("nothing to repair"));
+    }
+
+    fn intent_config() -> (tempfile::TempDir, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        Config::add(
+            &path,
+            Workspace {
+                name: "demo".into(),
+                host: "host".into(),
+                remote_root: "/srv/demo".into(),
+                mount_root: temp.path().join("mount"),
+            },
+        )
+        .unwrap();
+        (temp, path)
+    }
+
+    fn connect_cli(path: &std::path::Path) -> Cli {
+        Cli {
+            config: Some(path.into()),
+            command: Action::Mount {
+                workspace: "demo".into(),
+                if_desired: false,
+                verify_existing: false,
+                repair: false,
+                dry_run: false,
+                fskit: false,
+                raw_names: false,
+            },
+        }
+    }
+
+    #[test]
+    fn explicit_failed_connect_resumes_but_automatic_paused_skips_without_writes() {
+        let (_temp, path) = intent_config();
+        Config::set_mount_options(
+            &path,
+            rws::config::MountOptions {
+                sshfs: Some("/nonexistent/rws-test-sshfs".into()),
+                fskit: false,
+            },
+        )
+        .unwrap();
+        Config::set_mount_intent(&path, "demo", rws::config::MountIntent::Paused).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(
+            run_with_origin(connect_cli(&path), OperationOrigin::Automatic).unwrap(),
+            0
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(run(connect_cli(&path)).is_err());
+        assert_eq!(
+            Config::load(&path).unwrap().mount_intent("demo"),
+            rws::config::MountIntent::Connected
+        );
+    }
+
+    #[test]
+    fn contended_disconnect_explicitly_does_not_acknowledge_pause() {
+        let (_temp, path) = intent_config();
+        let config = Config::load(&path).unwrap();
+        let _lock = rws::lifecycle::lock(&path, &config, config.find("demo").unwrap()).unwrap();
+        let error = run(Cli {
+            config: Some(path.clone()),
+            command: Action::Unmount {
+                workspace: "demo".into(),
+                dry_run: false,
+            },
+        })
+        .unwrap_err();
+        assert!(
+            error.contains("auto-reconnect has NOT been paused"),
+            "{error}"
+        );
+        assert_eq!(
+            Config::load(&path).unwrap().mount_intent("demo"),
+            rws::config::MountIntent::Connected
+        );
+    }
+
+    #[test]
+    fn maintenance_connect_respects_pause_under_the_operation_lock() {
+        let (_temp, path) = intent_config();
+        Config::set_mount_intent(&path, "demo", rws::config::MountIntent::Paused).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let cli = Cli::try_parse_from([
+            "rws",
+            "--config",
+            path.to_str().unwrap(),
+            "connect",
+            "demo",
+            "--if-desired",
+            "--repair",
+        ])
+        .unwrap();
+        assert_eq!(run(cli).unwrap(), 0);
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn busy_disconnect_persists_pause_before_the_os_failure() {
+        let (_temp, path) = intent_config();
+        let snapshot = Config::load(&path).unwrap();
+        let result = with_mount_intent(
+            &path,
+            &snapshot,
+            "demo",
+            true,
+            OperationOrigin::Explicit,
+            |fresh| {
+                assert_eq!(fresh.mount_intent("demo"), rws::config::MountIntent::Paused);
+                assert_eq!(
+                    Config::load(&path).unwrap().mount_intent("demo"),
+                    rws::config::MountIntent::Paused
+                );
+                Err("volume busy".into())
+            },
+        );
+        assert_eq!(result.unwrap_err(), "volume busy");
+        assert_eq!(
+            Config::load(&path).unwrap().mount_intent("demo"),
+            rws::config::MountIntent::Paused
+        );
+    }
+
+    #[test]
+    fn automatic_failure_allows_a_later_success_without_writing_intent() {
+        let (_temp, path) = intent_config();
+        let snapshot = Config::load(&path).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let failed = with_mount_intent(
+            &path,
+            &snapshot,
+            "demo",
+            false,
+            OperationOrigin::Automatic,
+            |_| Err("SSH temporarily unreachable".into()),
+        );
+        assert!(failed.is_err());
+        assert_eq!(
+            with_mount_intent(
+                &path,
+                &snapshot,
+                "demo",
+                false,
+                OperationOrigin::Automatic,
+                |_| Ok(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn automatic_and_disconnect_races_have_a_serial_order() {
+        use std::sync::{Arc, Barrier};
+        for disconnect_first in [true, false] {
+            let (_temp, path) = intent_config();
+            let stale = Config::load(&path).unwrap();
+            let entered = Arc::new(Barrier::new(2));
+            let release = Arc::new(Barrier::new(2));
+            let worker = {
+                let path = path.clone();
+                let snapshot = stale.clone();
+                let entered = entered.clone();
+                let release = release.clone();
+                std::thread::spawn(move || {
+                    with_mount_intent(
+                        &path,
+                        &snapshot,
+                        "demo",
+                        disconnect_first,
+                        if disconnect_first {
+                            OperationOrigin::Explicit
+                        } else {
+                            OperationOrigin::Automatic
+                        },
+                        |_| {
+                            entered.wait();
+                            release.wait();
+                            Ok(0)
+                        },
+                    )
+                })
+            };
+            entered.wait();
+            let contention = with_mount_intent(
+                &path,
+                &stale,
+                "demo",
+                !disconnect_first,
+                if disconnect_first {
+                    OperationOrigin::Automatic
+                } else {
+                    OperationOrigin::Explicit
+                },
+                |_| panic!("contended operation reached the OS"),
+            );
+            assert!(contention.is_err());
+            if !disconnect_first {
+                assert!(contention.unwrap_err().contains("NOT been paused"));
+            }
+            release.wait();
+            assert_eq!(worker.join().unwrap().unwrap(), 0);
+            if !disconnect_first {
+                with_mount_intent(
+                    &path,
+                    &stale,
+                    "demo",
+                    true,
+                    OperationOrigin::Explicit,
+                    |_| Ok(0),
+                )
+                .unwrap();
+            }
+            assert_eq!(
+                with_mount_intent(
+                    &path,
+                    &stale,
+                    "demo",
+                    false,
+                    OperationOrigin::Automatic,
+                    |_| panic!("stale retry remounted a paused workspace")
+                )
+                .unwrap(),
+                0
+            );
+            assert_eq!(
+                Config::load(&path).unwrap().mount_intent("demo"),
+                rws::config::MountIntent::Paused
+            );
+        }
+    }
+
+    #[test]
+    fn another_workspace_update_is_preserved_during_an_operation() {
+        let (temp, path) = intent_config();
+        Config::add(
+            &path,
+            Workspace {
+                name: "other".into(),
+                host: "host".into(),
+                remote_root: "/srv/other".into(),
+                mount_root: temp.path().join("other"),
+            },
+        )
+        .unwrap();
+        let stale = Config::load(&path).unwrap();
+        with_mount_intent(
+            &path,
+            &stale,
+            "demo",
+            false,
+            OperationOrigin::Automatic,
+            |_| {
+                Config::set_mount_intent(&path, "other", rws::config::MountIntent::Paused)?;
+                Ok(0)
+            },
+        )
+        .unwrap();
+        with_mount_intent(
+            &path,
+            &stale,
+            "demo",
+            true,
+            OperationOrigin::Explicit,
+            |_| Ok(0),
+        )
+        .unwrap();
+        let fresh = Config::load(&path).unwrap();
+        assert_eq!(
+            fresh.mount_intent("other"),
+            rws::config::MountIntent::Paused
+        );
+        assert_eq!(fresh.mount_intent("demo"), rws::config::MountIntent::Paused);
+    }
     #[test]
     fn unhealthy_mount_never_reports_success_even_without_ssh_probe() {
         let (text, failed) = super::mount_health_status("demo", Err("deadline exceeded".into()));

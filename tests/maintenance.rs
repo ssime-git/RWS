@@ -1,5 +1,36 @@
 use std::process::Command;
 
+#[test]
+fn on_disk_agent_does_not_prove_this_installation_is_loaded() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = fixture(temp.path());
+    let binary = config.parent().unwrap().join("bin/rws");
+    rws::autostart::install(
+        &temp.path().join("Library/LaunchAgents"),
+        &binary,
+        &config,
+        &[],
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_rws"))
+        .env("HOME", temp.path())
+        .env_remove("RWS_SSHFS")
+        .args(["--config", config.to_str().unwrap(), "doctor", "--json"])
+        .output()
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let agent = value["before"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "launch_agent")
+        .unwrap();
+    assert_eq!(
+        agent["status"], "error",
+        "an unregistered fixture must not be reported as active: {agent}"
+    );
+}
+
 fn fixture(temp: &std::path::Path) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let support = temp.join("Library/Application Support/RWS");

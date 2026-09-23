@@ -37,6 +37,52 @@ fn register(config: &std::path::Path, root: &std::path::Path) {
     );
 }
 #[test]
+fn status_shows_saved_auto_reconnect_intent() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, &temp.path().join("mount"));
+    rws::config::Config::set_mount_intent(&config, "demo", rws::config::MountIntent::Paused)
+        .unwrap();
+    let out = run(&config, &["status", "demo", "--no-probe"]);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("  Auto-reconnect: paused"));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn disconnect_alias_and_dry_run_preserve_a_single_intent_registry() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config.json");
+    register(&config, &temp.path().join("mount"));
+    let alias = temp.path().join("alias.json");
+    std::os::unix::fs::symlink(&config, &alias).unwrap();
+    let before = std::fs::read(&config).unwrap();
+    for command in ["connect", "mount", "disconnect", "unmount"] {
+        let _ = run(&alias, &[command, "demo", "--dry-run"]);
+        assert_eq!(std::fs::read(&config).unwrap(), before);
+    }
+    let out = run(&alias, &["unmount", "demo"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        std::fs::symlink_metadata(&alias)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        rws::config::Config::load(&config)
+            .unwrap()
+            .mount_intent("demo"),
+        rws::config::MountIntent::Paused
+    );
+    let out = run(&config, &["connect", "demo", "--if-desired"]);
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("paused"));
+}
+#[test]
 fn registration_is_persistent_and_rejects_duplicates_and_overlapping_roots() {
     let temp = tempfile::tempdir().unwrap();
     let config = temp.path().join("config.json");

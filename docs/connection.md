@@ -31,6 +31,63 @@ SSH. The SSH probe has a 12-second deadline; it checks the remote directory as
 well as the connection. Neither state means an application's commands run remotely.
 On systems other than macOS, mount inspection is reported as unavailable.
 
+## Automatic remount contract
+
+RWS separates **desired state**, saved in configuration, from the actual mount
+and its identity receipt. The `mount_intent` object maps registered workspace
+names to `connected` or `paused`; hosts and paths are never hard-coded.
+
+```json
+"mount_intent": {
+  "demo": "connected",
+  "other-workspace": "paused"
+}
+```
+
+Use RWS commands to change this state rather than editing a live configuration.
+An absent entry means `connected`, preserving the previous login behavior for
+existing configurations. Registering a workspace does not itself enable a
+disabled or absent LaunchAgent.
+
+| Event | Behavior |
+| --- | --- |
+| Explicit Connect (or `mount`) | Save `connected` before attempting the mount; a transient failure retains that intent. |
+| Explicit Disconnect (or `unmount`) | Save `paused` before normal unmount. A busy volume stays mounted, but automatic reconnect is paused. |
+| Reboot, login or app update | Preserve intent; only `connected` workspaces are eligible for reconnect. |
+| Network loss followed by recovery | Retry eligible missing mounts on subsequent passes, without another manual Connect. |
+| Healthy verified mount | Leave it intact. |
+| Connect after a pause | Save `connected` and resume automatic reconnect. |
+| Finder eject or external unmount | Does not change RWS intent; an eligible workspace may be remounted. Use RWS Disconnect for a persistent pause. |
+
+With the current LaunchAgent **loaded**, launchd schedules a pass at login and
+every 30 seconds, with a 30-second failure throttle. This is a fixed retry
+interval, not a promise of readiness within 30 seconds: execution time, sleep,
+network availability and OS scheduling can delay recovery. The runner reloads
+configuration; background retries never turn a saved pause back into Connect.
+
+Manual and background operations serialize per workspace and reload state after
+locking. A conflicting operation is rejected visibly; if Disconnect cannot
+acquire its lock, the pause is **not saved** and the user must retry. Successful
+Disconnect intent cannot be undone by a retry using an older configuration.
+Dry runs do not modify intent.
+
+An unresponsive volume still present in the mount table is **not** force-ejected
+automatically: close work and use explicit repair. Unknown mounts are refused.
+RWS never restarts FSKit globally as an automatic fallback. Network return alone
+cannot guarantee recovery from an OS-level FSKit deadlock.
+
+`repair --mounts` respects a saved pause too; it must not act as an implicit
+Connect. Use `connect NAME` to resume a paused workspace before requesting repair.
+
+Writing or refreshing a plist is different from loading it into launchd. Existing
+loaded jobs retain their previous scheduling until the next login or an explicit
+reload. See [activation and verification](install.md#activate-now-and-verify).
+Custom and disabled services are not silently enabled by setup refresh.
+
+Automated state/scheduling tests do not prove physical reboot or network-loss
+recovery. Those acceptance checks require a disposable authorized workspace;
+they remain separate from the implementation's unit and CLI test results.
+
 ## Finder shortcuts
 
 ```sh

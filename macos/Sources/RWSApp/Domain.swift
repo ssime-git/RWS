@@ -31,15 +31,21 @@ struct MountOptions: Codable {
     }
 }
 
+enum MountIntent: String, Codable {
+    case connected, paused
+}
+
 struct AppConfiguration: Codable {
     let version: Int
     let workspaces: [Workspace]
     var mount: MountOptions
     var mountStateGeneration: String?
+    var mountIntent: [String: MountIntent] = [:]
 
     enum CodingKeys: String, CodingKey {
         case version, workspaces, mount
         case mountStateGeneration = "mount_state_generation"
+        case mountIntent = "mount_intent"
     }
 
     init(version: Int, workspaces: [Workspace], mount: MountOptions = MountOptions()) {
@@ -54,12 +60,15 @@ struct AppConfiguration: Codable {
         workspaces = try values.decode([Workspace].self, forKey: .workspaces)
         mount = try values.decodeIfPresent(MountOptions.self, forKey: .mount) ?? MountOptions()
         mountStateGeneration = try values.decodeIfPresent(String.self, forKey: .mountStateGeneration)
+        mountIntent = values.contains(.mountIntent)
+            ? try values.decode([String: MountIntent].self, forKey: .mountIntent)
+            : [:]
     }
 
     static func decode(_ data: Data) throws -> AppConfiguration {
         let object = try JSONSerialization.jsonObject(with: data)
         guard let dictionary = object as? [String: Any],
-              Set(dictionary.keys).isSubset(of: ["version", "workspaces", "mount", "mount_state_generation"]),
+              Set(dictionary.keys).isSubset(of: ["version", "workspaces", "mount", "mount_state_generation", "mount_intent"]),
               let workspaces = dictionary["workspaces"] as? [[String: Any]],
               workspaces.allSatisfy({ Set($0.keys).isSubset(of: ["name", "host", "remote_root", "mount_root"]) }),
               dictionary["mount"].map({ ($0 as? [String: Any]).map { Set($0.keys).isSubset(of: ["sshfs", "fskit"]) } ?? false }) ?? true
