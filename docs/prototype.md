@@ -49,9 +49,9 @@ rws --config path/to/config.json hook install   # same, with that config baked i
 `hook install` appends one marked line to `~/.zshrc` (`$ZDOTDIR` respected,
 `--zshrc PATH` overrides) and replaces its own previous line on re-run; other
 content is preserved. The equivalent manual form is
-`eval "$(rws hook zsh)"` in `~/.zshrc`. The macOS app runs this installation
-automatically for its active configuration and bundled CLI, so app users get
-the integration without any manual command.
+`eval "$(rws hook zsh)"` in `~/.zshrc`. Enable it once explicitly. The macOS
+app refreshes an existing active hook at relaunch using the durable CLI; it
+preserves removed/commented hooks and deliberately custom configurations.
 
 With the hook installed, `cd` into a verified mount (or opening a terminal
 there, in any emulator) asks once per shell:
@@ -109,7 +109,7 @@ rws unmount demo
 
 Install the CLI on PATH with `cargo install --path . --locked` if desired. A dry run prints the exact program and argument array without invoking SSH or creating a mount directory. Mounting refuses a nonempty directory or a symlink mount point. `--fskit` selects the user-space backend and requires a direct child of `/Volumes`; macFUSE creates the mount directory. Enable its FSKit module in System Settings > General > Login Items & Extensions. Without this flag or a saved FSKit setting, SSHFS uses its default backend. An already verified mount succeeds without remounting; an unrecognized volume requires explicit verification. Startup checks a filesystem device boundary while foreground-mode SSHFS remains alive, then verifies the remote destination through a disposable proof file. Startup has a 30-second polling deadline; errors identify a private log beside the configuration. SSHFS runs in its own process group and exits on OS unmount. Authentication must already work noninteractively. This prototype has no RWS daemon or automatic reconnect policy.
 
-`doctor` reports SSH/SFTP executable presence, verifies that `sshfs --version` succeeds, and optionally runs remote `pwd` with noninteractive SSH authentication. An SSHFS executable whose macFUSE library is missing is reported as unusable; mounting checks this before creating a mount directory. A missing mount dependency yields a nonzero result even if SSH works. It does not prove that macFUSE is loaded or a mount will succeed.
+`doctor` reports SSH/SFTP executable presence, verifies `sshfs --version`, checks durable integration references and the on-disk LaunchAgent, and checks each selected workspace's mount identity, bounded I/O responsiveness and noninteractive SSH `pwd` separately. `--workspace NAME` restricts workspace checks; `--json` emits a structured report; `--report NEW_PATH` saves a private copy without overwriting a file. A missing dependency, unhealthy mount or failed SSH check yields a nonzero exit status. This does not prove macFUSE activation, loaded launchd state, editor compatibility or future mount success. `doctor --repair` is equivalent to `repair`; mount changes additionally require `--mounts`. See [recovery](troubleshooting.md#diagnosis-and-repair).
 
 For the left sidebar, follow [Finder configuration and acceptance](finder-macos.md). The guide covers display categories, stale shortcuts after remount, and independent checks of Finder-created files.
 

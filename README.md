@@ -88,6 +88,22 @@ Support directory. `rws autostart install` then creates one LaunchAgent that
 attempts every configured workspace at login. This keeps restart recovery out of
 the source checkout; see the [durable-install procedure](docs/install.md#durable-macos-installation).
 
+### Diagnose and repair
+
+```sh
+rws doctor --json                        # read-only diagnosis
+rws repair                              # refresh existing managed integrations
+rws repair --workspace demo --mounts     # also recover this workspace if safe
+```
+
+Repair saves private before/after reports in the durable installation's
+`diagnostics/` directory. It refuses unknown mounts, checks SSH separately from
+filesystem responsiveness, and stops if ejection times out. It never restarts
+FSKit globally. [Recovery details and limitations](docs/troubleshooting.md#diagnosis-and-repair).
+Reopening an updated RWS app refreshes its durable CLI and existing setup;
+disabled integrations and custom configurations remain untouched. New LaunchAgent
+settings take effect at the next login, not by silently restarting an active service.
+
 ## Build the app
 
 On an Apple silicon Mac with [Rust, Xcode and Python 3 ready](docs/development.md#prerequisites):

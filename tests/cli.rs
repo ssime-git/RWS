@@ -123,11 +123,8 @@ fn loading_configuration_never_resolves_mount_roots() {
     // The unavailable volume surfaces as per-workspace state, never as a
     // global configuration failure.
     let out = run(&config, &["status", "--no-probe"]);
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    // Per-workspace output remains available even when an unavailable volume
+    // makes the overall health status fail.
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(
         text.contains("demo:") && text.contains("healthy:"),
@@ -342,6 +339,18 @@ fn install_copies_a_source_config_to_the_canonical_durable_layout() {
             .contains("/releases/")
     );
     assert_eq!(std::fs::read(&source).unwrap(), source_before);
+    let active_before = std::fs::read(support.join("config.json")).unwrap();
+    let again = run_in_home(&home, &["install"]);
+    assert!(
+        again.status.success(),
+        "{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert_eq!(
+        std::fs::read(support.join("config.json")).unwrap(),
+        active_before,
+        "unchanged app relaunch must not create a release or rotate mount receipts"
+    );
 }
 
 #[test]
@@ -494,7 +503,7 @@ fn canonical_config_aliases_cannot_bypass_sshfs_override_rejection() {
 }
 
 #[test]
-fn missing_canonical_config_keeps_the_existing_override_behavior() {
+fn doctor_reports_missing_canonical_config_before_dependency_selection() {
     if !cfg!(target_os = "macos") {
         return;
     }
@@ -510,7 +519,10 @@ fn missing_canonical_config_keeps_the_existing_override_behavior() {
         .unwrap();
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("SSHFS is missing"), "{stdout}");
+    assert!(
+        stdout.contains("configuration [error]") && stdout.contains("No such file"),
+        "{stdout}"
+    );
     assert!(!stdout.contains("conflicts with the canonical"), "{stdout}");
 }
 #[test]
@@ -620,7 +632,7 @@ fn doctor_and_mount_reject_installed_but_broken_sshfs() {
         !out.status.success(),
         "doctor must not accept a broken SSHFS installation"
     );
-    assert!(String::from_utf8_lossy(&out.stdout).contains("sshfs: unusable"));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("sshfs [error]"));
     if cfg!(target_os = "macos") {
         let out = Command::new(env!("CARGO_BIN_EXE_rws"))
             .arg("--config")
@@ -1193,11 +1205,8 @@ fn delta_rules_if_installed_skips_absent_rules_and_refreshes_existing_ones() {
     );
     assert!(!rules.exists());
     // Existing managed block: refresh rewrites it with the current binary.
-    std::fs::write(
-        &rules,
-        "mine\n<!-- BEGIN RWS REMOTE EXECUTION -->\nold '/stale/rws'\n<!-- END RWS REMOTE EXECUTION -->\n",
-    )
-    .unwrap();
+    std::fs::write(&rules, "mine\n").unwrap();
+    rws::agent_rules::install(&config, std::path::Path::new("/stale/rws"), &rules).unwrap();
     let out = run(
         &config,
         &[
@@ -1216,6 +1225,24 @@ fn delta_rules_if_installed_skips_absent_rules_and_refreshes_existing_ones() {
     assert!(content.starts_with("mine\n"), "{content}");
     assert!(content.contains(env!("CARGO_BIN_EXE_rws")), "{content}");
     assert!(!content.contains("/stale/rws"), "{content}");
+    rws::agent_rules::install(
+        &temp.path().join("custom/config.json"),
+        std::path::Path::new("/custom/rws"),
+        &rules,
+    )
+    .unwrap();
+    let custom = std::fs::read(&rules).unwrap();
+    let out = run(
+        &config,
+        &[
+            "delta-rules",
+            "--output",
+            rules.to_str().unwrap(),
+            "--if-installed",
+        ],
+    );
+    assert!(out.status.success());
+    assert_eq!(std::fs::read(rules).unwrap(), custom);
 }
 #[test]
 fn agent_cwd_maps_the_subdirectory_like_exec() {

@@ -9,6 +9,24 @@ use std::{
 const BEGIN: &str = "<!-- BEGIN RWS REMOTE EXECUTION -->";
 const END: &str = "<!-- END RWS REMOTE EXECUTION -->";
 
+/// Compare the complete managed block, including correctly quoted paths and
+/// current instructions. Unrelated personal rules do not affect this check.
+pub fn references_current(config: &Path, binary: &Path, target: &Path) -> Result<bool, String> {
+    let expected = managed_rules(config, binary)?;
+    let contents = match fs::read_to_string(target) {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("read rules: {e}")),
+    };
+    let begins: Vec<_> = contents.match_indices(BEGIN).map(|(i, _)| i).collect();
+    let ends: Vec<_> = contents.match_indices(END).map(|(i, _)| i).collect();
+    match (begins.as_slice(), ends.as_slice()) {
+        ([], []) => Ok(false),
+        ([start], [end]) if start < end => Ok(contents[*start..end + END.len()] == expected),
+        _ => Err("malformed or duplicate RWS remote-execution markers".into()),
+    }
+}
+
 /// Find the personal rules file Delta actually selects, or its default new file.
 pub fn default_delta_rules_path() -> Result<PathBuf, String> {
     if let Some(directory) = std::env::var_os("DELTA_CONFIG_DIR") {
@@ -198,6 +216,22 @@ pub fn install(config: &Path, binary: &Path, target: &Path) -> Result<(), String
 mod tests {
     use super::*;
     use std::os::unix::fs::{PermissionsExt, symlink};
+
+    #[test]
+    fn current_rules_require_the_exact_managed_block() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("AGENT.md");
+        let config = temp.path().join("config's.json");
+        let binary = temp.path().join("rws's");
+        assert!(!references_current(&config, &binary, &target).unwrap());
+        install(&config, &binary, &target).unwrap();
+        assert!(references_current(&config, &binary, &target).unwrap());
+        let current = fs::read_to_string(&target).unwrap();
+        fs::write(&target, current.replace("route EVERY", "route SOME")).unwrap();
+        assert!(!references_current(&config, &binary, &target).unwrap());
+        fs::write(&target, format!("{current}\n{BEGIN}")).unwrap();
+        assert!(references_current(&config, &binary, &target).is_err());
+    }
     struct Fixture(tempfile::TempDir);
     impl Fixture {
         fn new() -> Self {

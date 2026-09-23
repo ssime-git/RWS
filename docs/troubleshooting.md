@@ -21,7 +21,52 @@ remove real usernames, hosts, paths and tokens before sharing them in an issue.
 | Agent not found on VM | Agent executable in remote login environment | Install/configure it remotely or use its absolute remote path. No local fallback occurs. |
 | Disconnect says busy | Open files/terminals using the mounted directory | Close them or leave the directory, then retry normal disconnect. Do not force-unmount by default. |
 | Volume still mounted but every operation fails (`Input/output error`) after a network loss | `rws status` reports `connected (unresponsive mount: …)` | The mount is a zombie: close files using it, then click **Réparer** in the app or run `rws connect NAME --repair` — it ejects the dead volume and mounts again. The forced ejection is refused while the mount answers normally; unsaved writes on the dead mount may be lost. **Actualiser** only re-reads state and repairs nothing. |
-| Finder frozen; processes stuck in state `U` (`ps` STAT) on the mount; repair or remount hangs | `pgrep -fl sshfs` shows the old server; `ps -o stat` shows `U` on git/mount/umount | `connect NAME --repair` now terminates the stale workspace `sshfs` process itself and refuses to remount while the mount point does not answer, printing the remediation instead of hanging. When it reports the FSKit service as wedged, that layer is beyond RWS's reach: run `sudo pkill -9 fskitd` (launchd respawns it, aborting the stuck operations), then retry; a reboot is the guaranteed fallback. Heavy Git worktree activity over the mount is a known trigger. |
+| Finder frozen; processes stuck in state `U` (`ps` STAT) on the mount; repair or remount hangs | Inspect the saved diagnostic report; distinguish responsive SSH from an unresponsive filesystem | Recovery bounds diskutil/umount execution and stops without remounting if ejection fails or exceeds 15 seconds. A timeout does not prove kernel resources were released. Do not repeat repairs in a loop. A global FSKit restart can disrupt every FSKit volume and needs explicit consent after closing active work; RWS never performs it automatically. The underlying FSKit hang is not established to be fixed. |
+
+## Diagnosis and repair
+
+Use the durable binary, typically `~/Library/Application Support/RWS/bin/rws`:
+
+```sh
+rws doctor --workspace demo
+rws doctor --json --report /absolute/new-report.json
+rws repair
+rws repair --workspace demo --mounts
+# Equivalent combined form:
+rws doctor --workspace demo --repair --mounts
+```
+
+`doctor` is read-only unless you request a report or repair. It separates SSH
+reachability, registered mount identity and actual filesystem responsiveness.
+`status --no-probe` skips SSH only: it still checks mount I/O, and an unhealthy
+mount causes a nonzero result. A mounted device entry alone is not success.
+
+Repair always saves a mode-0600 JSON report, by default under
+`~/Library/Application Support/RWS/diagnostics/`. Its path is printed (or returned
+as `report_path` in JSON). A separate `.before.json` snapshot is synced before
+mutation and never overwritten, preserving evidence even if repair fails.
+Reports include local paths, workspace names and SSH output: review before sharing.
+
+Without `--mounts`, repair only reconciles existing managed shell/Delta rules
+and the recognized RWS LaunchAgent. It preserves custom configurations, disabled
+hooks, user text and unrelated launch agents. Duplicate active hooks require an
+explicit choice: keep exactly one managed line, then retry. New integration
+enablement stays explicit (`hook install`, `delta-rules`, `autostart install`).
+
+With `--mounts`, repair attempts disconnected or verified unresponsive volumes
+only when SSH is reachable. Unknown mounts are refused; healthy mounts are left
+alone. Forced ejection of a dead volume can lose unsaved writes: close applications
+using it first. Each mount repair subprocess has a 120-second deadline; dependency
+checks have 5 seconds, SSH probes 12 seconds, and mount health probes 4 seconds.
+The whole report can take longer with several workspaces. OS process creation or
+kernel I/O may still block below these user-space deadlines; killing a command
+does not establish that the filesystem service recovered.
+
+The app's **Réparer** action uses this workflow and keeps its report in the output.
+New LaunchAgent log settings are only verified on disk and apply at next login.
+No operation changes macFUSE approval, restarts FSKit or redirects Delta's
+internal native Git/file operations. A successful CLI repair is not evidence
+that a Delta prompt completed; test that workflow separately.
 | RWS operation timed out | Diagnostic message and real mount status | Inspect status before retrying. Restart the app if it marks operation state uncertain. Do not assume timeout means no side effect occurred. |
 | No update button / no updates | Development versus production bundle | Development updates are disabled. Follow [release readiness](macos-app.md); rebuilding is not production auto-update delivery. |
 

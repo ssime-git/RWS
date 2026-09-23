@@ -463,3 +463,51 @@ multi-host testing; the workspace was disconnected after the runs.
 Limits: the second host is a local virtual machine, not a second physical
 network; Delta's own isolated-checkout relocation remains out of scope as
 documented in docs/connection.md.
+# Recovery maintenance — 23 September 2026
+
+The setup/recovery changes were checked locally with Rust build, formatting,
+Clippy (`--all-targets -D warnings`) and 120 passing tests. One additional
+process-inspection lifecycle test cannot run in the automation sandbox:
+`list processes: Operation not permitted`. It was run separately and remains
+unverified here, not treated as a passing test.
+
+New tests cover bounded subprocess output/timeouts, descendant-held pipes,
+managed hook preservation and duplicate refusal, custom configuration retention,
+private before/after reports, idempotent durable installation and safe existing
+LaunchAgent refresh. Swift command/configuration tests were added, including
+acceptance of the Rust durable `mount_state_generation` field. The local Swift
+test invocation fails while linking the package manifest with an undefined
+`PackageDescription.Package.__allocating_init` symbol, before app compilation.
+The updated app has therefore **not** been built or installed locally.
+
+The updated CLI was installed into the real durable user installation and the
+existing generic LaunchAgent received private log paths (effective at next
+login; loaded service state not verified). A real diagnosis confirmed both SSH
+destinations reachable, one responsive verified mount and one disconnected mount.
+An explicit repair of the disconnected workspace terminated at the 30-second
+mount-start deadline and saved its before/after report. Its SSHFS log repeatedly
+reported `invalidConnection` and requested helper installation; helper execution
+also reported `Operation not permitted` in this automation environment. This
+does not prove that the host's helper installation is missing. No global FSKit
+restart was performed, no reboot recovery was verified, and Delta completion
+remains unverified. Do not describe these maintenance changes as a fix for the
+underlying FSKit deadlock or as clean-Mac end-to-end acceptance.
+
+## Apple toolchain repair follow-up — 23 September 2026
+
+The manifest linker failure was traced to obsolete Swift 5.10 private interfaces
+left in the Swift 6.4 Command Line Tools installation. A controlled copy without
+those interfaces compiled the same manifest; the original reproduced the undefined
+constructor. The user then ran the SHA-256-guarded helper, preserving the two
+interfaces and an obsolete duplicate SwiftBridging module map under backup names.
+SwiftPM now resolves the package and downloads the pinned Sparkle artifact with
+the system installation; the manifest failure is resolved.
+
+The macOS 27 SDK subsequently fails app compilation because its SwiftUIMacros
+plugin is absent from the installed Command Line Tools. Selecting the already
+installed macOS 26.5 SDK explicitly gets through application compilation, but
+the Swift tests remain blocked by the missing XCTest module. No Swift test is
+claimed passing. Full Xcode is not installed, and no system-wide SDK/developer
+directory setting was changed. The 120 runnable Rust tests and 17 release-tool
+tests pass after the repair; the separate process-inspection sandbox limitation
+remains. Delta and live remount acceptance have not been repeated in this step.

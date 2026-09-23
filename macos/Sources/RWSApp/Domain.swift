@@ -35,6 +35,12 @@ struct AppConfiguration: Codable {
     let version: Int
     let workspaces: [Workspace]
     var mount: MountOptions
+    var mountStateGeneration: String?
+
+    enum CodingKeys: String, CodingKey {
+        case version, workspaces, mount
+        case mountStateGeneration = "mount_state_generation"
+    }
 
     init(version: Int, workspaces: [Workspace], mount: MountOptions = MountOptions()) {
         self.version = version
@@ -47,12 +53,13 @@ struct AppConfiguration: Codable {
         version = try values.decode(Int.self, forKey: .version)
         workspaces = try values.decode([Workspace].self, forKey: .workspaces)
         mount = try values.decodeIfPresent(MountOptions.self, forKey: .mount) ?? MountOptions()
+        mountStateGeneration = try values.decodeIfPresent(String.self, forKey: .mountStateGeneration)
     }
 
     static func decode(_ data: Data) throws -> AppConfiguration {
         let object = try JSONSerialization.jsonObject(with: data)
         guard let dictionary = object as? [String: Any],
-              Set(dictionary.keys).isSubset(of: ["version", "workspaces", "mount"]),
+              Set(dictionary.keys).isSubset(of: ["version", "workspaces", "mount", "mount_state_generation"]),
               let workspaces = dictionary["workspaces"] as? [[String: Any]],
               workspaces.allSatisfy({ Set($0.keys).isSubset(of: ["name", "host", "remote_root", "mount_root"]) }),
               dictionary["mount"].map({ ($0 as? [String: Any]).map { Set($0.keys).isSubset(of: ["sshfs", "fskit"]) } ?? false }) ?? true
@@ -102,7 +109,7 @@ struct CLICommand: Equatable {
     }
 
     static func connectRepair(config: URL, workspace: String) -> Self {
-        Self(arguments: prefix(config) + ["connect", workspace, "--repair"])
+        Self(arguments: prefix(config) + ["repair", "--workspace", workspace, "--mounts"])
     }
 
     static func disconnect(config: URL, workspace: String) -> Self {
@@ -127,6 +134,14 @@ struct CLICommand: Equatable {
 
     static func hookInstall(config: URL) -> Self {
         Self(arguments: prefix(config) + ["hook", "install"])
+    }
+
+    static func hookRefresh(config: URL) -> Self {
+        Self(arguments: prefix(config) + ["hook", "install", "--if-installed"])
+    }
+
+    static func installDurable(config: URL) -> Self {
+        Self(arguments: prefix(config) + ["install", "--skip-integrations"])
     }
 
     static func deltaRulesRefresh(config: URL) -> Self {

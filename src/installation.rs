@@ -132,6 +132,23 @@ pub fn install_current(layout: &Layout, source_config: &Path) -> Result<Installa
     let config = Config::load_existing(source_config)?;
     let rws = std::env::current_exe().map_err(|e| format!("find current RWS executable: {e}"))?;
     let sshfs = effective_sshfs(source_config, &config)?;
+    // Relaunching the same app must not rotate receipts or accumulate identical
+    // SSHFS releases. Only reuse a complete canonical installation.
+    if same_config_file(source_config, &layout.config_path())
+        && let Some(generation) = config.mount_state_generation.as_ref()
+        && sshfs == layout.releases().join(generation).join("sshfs/sshfs")
+        && validate_executable(&layout.binary(), "managed RWS binary").is_ok()
+        && validate_executable(&sshfs, "managed SSHFS").is_ok()
+        && fs::read(&rws).map_err(|e| e.to_string())?
+            == fs::read(layout.binary()).map_err(|e| e.to_string())?
+    {
+        return Ok(Installation {
+            release: layout.releases().join(generation),
+            rws: layout.binary(),
+            sshfs,
+            generation: generation.clone(),
+        });
+    }
     install(layout, source_config, &rws, &sshfs)
 }
 

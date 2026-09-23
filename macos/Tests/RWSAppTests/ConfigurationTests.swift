@@ -2,6 +2,11 @@ import XCTest
 @testable import RWSApp
 
 final class ConfigurationTests: XCTestCase {
+    func testAcceptsDurableInstallationGeneration() throws {
+        let data = #"{"version":1,"workspaces":[],"mount_state_generation":"release-123"}"#.data(using: .utf8)!
+        let config = try AppConfiguration.decode(data)
+        XCTAssertEqual(config.mountStateGeneration, "release-123")
+    }
     func testDecodesCurrentRustConfiguration() throws {
         let data = #"{"version":1,"workspaces":[{"name":"demo","host":"vm","remote_root":"/srv","mount_root":"/Volumes/demo"}],"mount":{"sshfs":"/opt/sshfs","fskit":true}}"#.data(using: .utf8)!
         let config = try AppConfiguration.decode(data)
