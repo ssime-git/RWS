@@ -5,6 +5,7 @@ use rws::{
     workspace::Workspace,
 };
 use std::{path::PathBuf, process::Command};
+mod maintenance;
 
 #[derive(Parser)]
 #[command(
@@ -20,7 +21,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Action {
     /// Copy this configuration and its executables into durable macOS state.
-    Install,
+    Install {
+        /// Let the app reconcile integrations according to its preferences.
+        #[arg(long)]
+        skip_integrations: bool,
+    },
     /// Describe whether a filesystem directory belongs to a verified RWS mount.
     Context {
         #[arg(long)]
@@ -133,6 +138,29 @@ enum Action {
     Doctor {
         #[arg(long)]
         workspace: Option<String>,
+        #[arg(long)]
+        json: bool,
+        /// Save a private report to a new file (never overwrite an existing file).
+        #[arg(long)]
+        report: Option<PathBuf>,
+        /// Refresh existing managed integrations, then diagnose again.
+        #[arg(long)]
+        repair: bool,
+        /// Also reconnect missing or repair verified unresponsive mounts.
+        #[arg(long, requires = "repair")]
+        mounts: bool,
+    },
+    /// Diagnose, repair existing managed integrations, and diagnose again.
+    Repair {
+        #[arg(long)]
+        workspace: Option<String>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        report: Option<PathBuf>,
+        /// May force-eject a verified dead mount; unsaved writes can be lost.
+        #[arg(long)]
+        mounts: bool,
     },
 }
 #[derive(Clone, Copy, ValueEnum)]
@@ -149,6 +177,9 @@ enum HookAction {
     Install {
         #[arg(long)]
         zshrc: Option<PathBuf>,
+        /// Refresh an active managed hook only; preserve absent/commented hooks.
+        #[arg(long)]
+        if_installed: bool,
     },
 }
 #[derive(Subcommand)]
@@ -226,6 +257,9 @@ fn run_autostart() -> Result<i32, String> {
     let path = canonical_layout()?.config_path();
     let config = Config::load_existing(&path)?;
     let mut failures = Vec::new();
+    if let Err(error) = maintenance::refresh_integrations(&path) {
+        failures.push(format!("integration refresh: {error}"));
+    }
     for workspace in &config.workspaces {
         match run(Cli {
             config: Some(path.clone()),
@@ -286,6 +320,17 @@ fn available(program: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|path| std::env::split_paths(&path).any(|p| p.join(program).is_file()))
 }
+fn mount_health_status(name: &str, health: Result<(), String>) -> (String, bool) {
+    match health {
+        Ok(()) => ("connected (verified RWS mount)".into(), false),
+        Err(reason) => (
+            format!(
+                "connected (unresponsive mount: {reason}); repair with: rws connect {name} --repair"
+            ),
+            true,
+        ),
+    }
+}
 fn sshfs_program(config_path: &std::path::Path, config: &Config) -> Result<String, String> {
     rws::installation::select_sshfs(config_path, config)?
         .into_os_string()
@@ -297,10 +342,11 @@ fn check_sshfs(config_path: &std::path::Path, config: &Config) -> Result<String,
     if !available(&program) {
         return Err("SSHFS is missing. Install macFUSE and SSHFS; see docs/prototype.md".into());
     }
-    let output = Command::new(&program)
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("SSHFS cannot start: {e}. Check the macFUSE/SSHFS installation"))?;
+    let output = rws::process::output(
+        Command::new(&program).arg("--version"),
+        std::time::Duration::from_secs(5),
+    )
+    .map_err(|e| format!("SSHFS cannot start: {e}. Check the macFUSE/SSHFS installation"))?;
     if !output.status.success() {
         return Err(format!(
             "SSHFS is installed but unusable. Check the macFUSE/SSHFS installation: {}",
@@ -339,9 +385,14 @@ fn invoke(program: &str, args: &[String], dry_run: bool, replace: bool) -> Resul
         return Err(format!("start {program}: {}", command.exec()));
     }
     let _ = replace;
-    let status = command
-        .status()
-        .map_err(|e| format!("start {program}: {e}"))?;
+    let status = if matches!(program, "/usr/sbin/diskutil" | "/sbin/umount") {
+        rws::process::run(&mut command, std::time::Duration::from_secs(15))
+            .map_err(|error| format!("{error}; ejection is NOT confirmed, remount stopped. The OS may still hold the volume. Inspect RWS doctor and close applications using it. A global FSKit restart requires explicit authorization; do not repeat repairs in a loop."))?
+    } else {
+        command
+            .status()
+            .map_err(|e| format!("start {program}: {e}"))?
+    };
     Ok(status.code().unwrap_or(1))
 }
 fn ssh_args(host: &str, script: String, tty: bool) -> Vec<String> {
@@ -383,6 +434,37 @@ fn run(cli: Cli) -> Result<i32, String> {
         return Ok(0);
     }
     match &cli.command {
+        Action::Doctor {
+            workspace,
+            json,
+            report,
+            repair,
+            mounts,
+        } => {
+            return maintenance::execute(
+                &path,
+                workspace.as_deref(),
+                *json,
+                report.as_deref(),
+                *repair,
+                *mounts,
+            );
+        }
+        Action::Repair {
+            workspace,
+            json,
+            report,
+            mounts,
+        } => {
+            return maintenance::execute(
+                &path,
+                workspace.as_deref(),
+                *json,
+                report.as_deref(),
+                true,
+                *mounts,
+            );
+        }
         Action::Autostart {
             action: AutostartAction::Install { directory },
         } => {
@@ -421,24 +503,24 @@ fn run(cli: Cli) -> Result<i32, String> {
         Config::load(&path)?
     };
     match cli.command {
-        Action::Install => {
+        Action::Install { skip_integrations } => {
             if !cfg!(target_os = "macos") {
                 return Err("install is supported on macOS only".into());
             }
             let layout = canonical_layout()?;
             let installed = rws::installation::install_current(&layout, &path)?;
+            maintenance::refresh_launch_agent()?;
             println!(
                 "Installed durable RWS at {}",
                 layout.config_path().display()
             );
-            println!(
-                "Refresh shell integration manually: {} hook install",
-                installed.rws.display()
-            );
-            println!(
-                "Refresh Delta rules manually: {} delta-rules --if-installed",
-                installed.rws.display()
-            );
+            if !skip_integrations {
+                maintenance::refresh_integrations(&layout.config_path())?;
+                println!(
+                    "Existing managed shell and Delta integrations refreshed to {}. New integrations remain opt-in (hook install / delta-rules).",
+                    installed.rws.display()
+                );
+            }
             Ok(0)
         }
         Action::DeltaRules {
@@ -459,6 +541,10 @@ fn run(cli: Cli) -> Result<i32, String> {
             let config = path
                 .canonicalize()
                 .map_err(|e| format!("config path: {e}"))?;
+            if if_installed && !maintenance::rules_for_configuration(&target, &config)? {
+                println!("Custom Delta configuration preserved; nothing refreshed.");
+                return Ok(0);
+            }
             let binary = std::env::current_exe().map_err(|e| e.to_string())?;
             rws::agent_rules::install(&config, &binary, &target)?;
             println!("Global Delta RWS rules installed in {}", target.display());
@@ -519,21 +605,24 @@ fn run(cli: Cli) -> Result<i32, String> {
                 let state = match rws::lifecycle::identity(&w.mount_root) {
                     Ok(None) => "disconnected".to_string(),
                     Ok(Some(ref actual)) if rws::lifecycle::verified(&path, &config, w, actual) => {
-                        match rws::lifecycle::probe_health(
-                            &w.mount_root,
-                            std::time::Duration::from_secs(4),
-                        ) {
-                            Ok(()) => "connected (verified RWS mount)".into(),
-                            Err(reason) => format!(
-                                "connected (unresponsive mount: {reason}); repair with: rws connect {} --repair",
-                                w.name
+                        let (state, unhealthy) = mount_health_status(
+                            &w.name,
+                            rws::lifecycle::probe_health(
+                                &w.mount_root,
+                                std::time::Duration::from_secs(4),
                             ),
-                        }
+                        );
+                        failed |= unhealthy;
+                        state
                     }
                     Ok(Some(_)) => {
+                        failed = true;
                         "mounted (identity unverified; not managed by this configuration)".into()
                     }
-                    Err(e) => format!("unavailable: {e}"),
+                    Err(e) => {
+                        failed = true;
+                        format!("unavailable: {e}")
+                    }
                 };
                 println!(
                     "{}: {state}\n  VM: {}:{}\n  Mac: {}",
@@ -669,7 +758,10 @@ fn run(cli: Cli) -> Result<i32, String> {
                         eprintln!("Opt out per shell with RWS_NO_AUTO_SHELL=1.");
                     }
                 }
-                HookAction::Install { zshrc } => {
+                HookAction::Install {
+                    zshrc,
+                    if_installed,
+                } => {
                     let zshrc = match zshrc {
                         Some(p) => p,
                         None => {
@@ -679,6 +771,27 @@ fn run(cli: Cli) -> Result<i32, String> {
                             PathBuf::from(base).join(".zshrc")
                         }
                     };
+                    if if_installed {
+                        let text = match std::fs::read_to_string(&zshrc) {
+                            Ok(text) => text,
+                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                            Err(e) => return Err(e.to_string()),
+                        };
+                        if text
+                            .lines()
+                            .filter(|line| {
+                                line.contains(rws::shell_hook::MARKER)
+                                    && !line.trim_start().starts_with('#')
+                            })
+                            .all(|line| maintenance::manages_configuration(line, &absolute))
+                        {
+                            rws::shell_hook::refresh_existing(&zshrc, &binary, baked)?;
+                        }
+                        println!(
+                            "Existing eligible shell hook refreshed; disabled and custom hooks preserved."
+                        );
+                        return Ok(0);
+                    }
                     let line = rws::shell_hook::install(&zshrc, &binary, baked)?;
                     println!("Installed in {}: {line}", zshrc.display());
                     println!("Open a new terminal, or run: source {}", zshrc.display());
@@ -912,34 +1025,17 @@ fn run(cli: Cli) -> Result<i32, String> {
             }
             Ok(code)
         }
-        Action::Doctor { workspace } => {
-            let mut missing = false;
-            for tool in ["ssh", "sftp"] {
-                let found = available(tool);
-                println!("{tool}: {}", if found { "available" } else { "missing" });
-                missing |= !found;
-            }
-            match check_sshfs(&path, &config) {
-                Ok(_) => println!("sshfs: available and runnable"),
-                Err(error) => {
-                    println!("sshfs: unusable — {error}");
-                    missing = true;
-                }
-            }
-            if let Some(name) = workspace {
-                let w = config.find(&name)?;
-                let mut args = vec!["-o".into(), "BatchMode=yes".into()];
-                args.extend(ssh_args(
-                    &w.host,
-                    remote_command(&w.remote_root, &["pwd".into()])?,
-                    false,
-                ));
-                let code = invoke("ssh", &args, false, false)?;
-                if code != 0 {
-                    return Ok(code);
-                }
-            }
-            Ok(if missing { 1 } else { 0 })
-        }
+        Action::Doctor { .. } | Action::Repair { .. } => unreachable!(),
+    }
+}
+
+#[cfg(test)]
+mod maintenance_status_tests {
+    #[test]
+    fn unhealthy_mount_never_reports_success_even_without_ssh_probe() {
+        let (text, failed) = super::mount_health_status("demo", Err("deadline exceeded".into()));
+        assert!(failed);
+        assert!(text.contains("unresponsive") && text.contains("demo --repair"));
+        assert!(!super::mount_health_status("demo", Ok(())).1);
     }
 }

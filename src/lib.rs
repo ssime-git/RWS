@@ -7,6 +7,7 @@ pub mod agent_rules;
 pub mod autostart;
 pub mod lifecycle;
 pub mod mount;
+pub mod process;
 pub mod routing;
 pub mod shell_hook;
 pub mod shortcuts;

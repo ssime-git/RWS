@@ -204,6 +204,38 @@ Issue GitHub : [#9](https://github.com/ssime-git/RWS/issues/9).
   absentes/incompatibles → instructions exactes ; aucune désactivation implicite des protections macOS.
 - **Liens :** [guide de setup](.agents/skills/rws-macos-setup/SKILL.md), [014](#rws-014), [015](#rws-015).
 
+### Bug nº 2 du suivi « from scratch » — intégration terminal obsolète
+
+Constaté le 23 septembre 2026 ; correction produit à implémenter. Lié à
+[RWS-003](#rws-003) et RWS-009. Cette numérotation de suivi ne désigne pas
+l'issue GitHub #2, qui concerne Delta.
+
+- **Symptôme :** après installation durable et remontage vérifié, ouvrir Ghostty
+  depuis le menu contextuel d'un dossier monté ne bascule pas vers la VM.
+- **Cause reproduite :** la ligne gérée dans `.zshrc` pointe encore vers un
+  binaire `target/debug/rws` et une ancienne configuration `.rws-local/setup.json`.
+  `context --cwd` refuse l'identité du montage avec cette configuration, alors
+  que le binaire et la configuration durables renvoient `mode=remote` et
+  `mount_verified=true` pour le même chemin.
+- **Correction locale seulement :** réinstallation du hook avec les chemins
+  durables ; syntaxe zsh vérifiée. Le menu contextuel et la bascule dans un
+  nouveau terminal restent à valider réellement.
+- **Correction attendue :** l'installation neuve doit configurer l'intégration
+  terminal autorisée ; la migration et la réinstallation doivent actualiser les
+  références RWS gérées existantes vers le binaire et la configuration durables.
+  Respecter les configurations personnalisées, `$ZDOTDIR`, les autres lignes du
+  profil et le choix de désactiver l'intégration. Ne pas coder de chemin utilisateur
+  en dur. Auditer aussi les références des règles Delta déjà installées.
+- **Acceptation :** installation neuve et migration depuis une configuration de
+  développement ; réinstallation idempotente sans doublon ; nouveau zsh ouvert
+  dans le montage via Ghostty et `cd` depuis un dossier local ; prompt de bascule,
+  puis `uname -s`, `hostname` et `pwd` confirmant la VM et le sous-dossier attendus.
+  Refaire le parcours après redémarrage. Ne pas annoncer l'installation complète
+  sur la seule base du statut des montages.
+- **Limite :** cette correction ne valide pas l'envoi d'un message dans Delta.
+  Les erreurs Delta de résolution de worktree/historique doivent être diagnostiquées
+  séparément ; aucun lien causal avec le hook n'est établi.
+
 <a id="rws-010"></a>
 ## RWS-010 — Gestion réutilisable des espaces et hôtes
 

@@ -22,6 +22,7 @@ where the files live and where explicitly launched commands execute.
 | Download a development build without compiling RWS | [Build availability](docs/install.md#build-availability) |
 | Compile, test and run the app yourself | [Developer quick start](docs/development.md) |
 | Use only the command line | [CLI guide](docs/prototype.md) |
+| Keep configured mounts across macOS restarts | [Persistent mounts](docs/install.md#durable-macos-installation) |
 | Understand which processes run where | [Conceptual architecture](docs/architecture.md) |
 | Fix a connection, mounting or Finder problem | [Troubleshooting](docs/troubleshooting.md) |
 
@@ -78,6 +79,30 @@ An editor extension without a CLI needs its own integration.
 The existing Delta integration uses personal agent instructions. A tested Delta
 workflow is available in the [Delta guide](docs/connection.md#delta-and-linux-commands);
 it is not equivalent to native remote execution without instructions.
+
+### Persistent mounts on macOS
+
+After a configuration and its mounts work interactively, `rws install` copies
+RWS, the selected SSHFS build, and the configuration into the user's Application
+Support directory. `rws autostart install` then creates one LaunchAgent that
+attempts every configured workspace at login. This keeps restart recovery out of
+the source checkout; see the [durable-install procedure](docs/install.md#durable-macos-installation).
+
+### Diagnose and repair
+
+```sh
+rws doctor --json                        # read-only diagnosis
+rws repair                              # refresh existing managed integrations
+rws repair --workspace demo --mounts     # also recover this workspace if safe
+```
+
+Repair saves private before/after reports in the durable installation's
+`diagnostics/` directory. It refuses unknown mounts, checks SSH separately from
+filesystem responsiveness, and stops if ejection times out. It never restarts
+FSKit globally. [Recovery details and limitations](docs/troubleshooting.md#diagnosis-and-repair).
+Reopening an updated RWS app refreshes its durable CLI and existing setup;
+disabled integrations and custom configurations remain untouched. New LaunchAgent
+settings take effect at the next login, not by silently restarting an active service.
 
 ## Build the app
 

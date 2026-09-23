@@ -23,12 +23,46 @@ configuration at login and retries failed mounts after 30 seconds. macFUSE's
 privileged helper still must be approved once from a real GUI terminal; a
 LaunchAgent cannot show that prompt.
 
+### Activate now and verify
+
+The agent is automatically loaded at the next macOS login. To activate it without
+restarting, run this from a normal user terminal (not an isolated automation
+environment):
+
+```sh
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/io.rws.mounts.plist"
+```
+
+It retries failed mounts every 30 seconds, for example while Tailscale is still
+connecting. Check its registration and the volumes with:
+
+```sh
+launchctl print "gui/$(id -u)/io.rws.mounts"
+mount | grep RWS
+```
+
+If the service is absent, rerun the two durable-install commands above. A failed
+mount does not establish that macFUSE can display a privilege prompt: approve its
+helper once in a GUI terminal, then let Launchd retry.
+
 Refresh zsh and Delta manually after installation using the managed executable:
 
 ```sh
 "$HOME/Library/Application Support/RWS/bin/rws" hook install
 "$HOME/Library/Application Support/RWS/bin/rws" delta-rules
 ```
+
+These commands explicitly enable the integrations. Later `rws install` runs
+refresh already-enabled managed references; repeated installation of the same
+binary/configuration does not create another release. The updated app performs
+this durable update at relaunch for the canonical configuration. It refreshes
+the existing LaunchAgent on disk without enabling absent/custom/disabled agents
+or restarting a currently loaded job. Logging changes apply at the next login.
+Autostart output is saved in `~/Library/Application Support/RWS/logs/` as
+`autostart.log` and `autostart.err.log` (private files).
+
+Use `rws doctor` before troubleshooting and `rws repair` to reconcile an existing
+setup. See [diagnosis and repair](troubleshooting.md#diagnosis-and-repair).
 
 ## 1. Get the app
 
@@ -137,15 +171,16 @@ RWS attempts to add a favorite. If it cannot, follow the displayed manual
 instructions or the [Finder guide](finder-macos.md). A favorite is a shortcut to a
 mounted directory; it does not reconnect an offline workspace when clicked.
 
-Once a configuration is active, the app also installs the
-[zsh terminal integration](prototype.md#automatic-terminal-switch-zsh)
-automatically: in every **new** interactive zsh, `cd` into a connected
+Enable the [zsh terminal integration](prototype.md#automatic-terminal-switch-zsh)
+once with `rws hook install`. The app subsequently refreshes an existing active
+hook, but does not recreate a removed or commented-out hook. In every **new**
+interactive zsh, `cd` into a connected
 workspace asks `RWS: switch to <host>? [Y/n]` once per shell — Enter opens the
 remote shell on the matching remote directory, `n` stays local, and the answer
 is remembered for that shell. `exit` returns to the local shell. Terminals already open before installation need one
 `source ~/.zshrc`. The integration is one marked line in `~/.zshrc`; remove
 that line or set `RWS_NO_AUTO_SHELL=1` to opt out, and set the
-`installShellHook` app preference to `false` to stop automatic installation.
+`installShellHook` app preference to `false` to stop automatic refresh.
 If [Delta rules](connection.md#delta-and-linux-commands) were installed, the
 app refreshes their embedded paths the same way (`refreshDeltaRules`
 preference to opt out); it never installs them uninvited.

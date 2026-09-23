@@ -2,6 +2,11 @@ import XCTest
 @testable import RWSApp
 
 final class CommandBuilderTests: XCTestCase {
+    func testDurableInstallLeavesIntegrationPreferencesToApp() {
+        let config = URL(fileURLWithPath: "/tmp/config.json")
+        XCTAssertEqual(CLICommand.installDurable(config: config).arguments,
+                       ["--config", "/tmp/config.json", "install", "--skip-integrations"])
+    }
     func testArgumentsKeepUserValuesAsIndividualArguments() {
         let config = URL(fileURLWithPath: "/tmp/config with spaces.json")
         XCTAssertEqual(
@@ -21,7 +26,7 @@ final class CommandBuilderTests: XCTestCase {
         let config = URL(fileURLWithPath: "/tmp/config.json")
         XCTAssertEqual(
             CLICommand.connectRepair(config: config, workspace: "demo").arguments,
-            ["--config", "/tmp/config.json", "connect", "demo", "--repair"]
+            ["--config", "/tmp/config.json", "repair", "--workspace", "demo", "--mounts"]
         )
     }
 
@@ -39,5 +44,11 @@ final class CommandBuilderTests: XCTestCase {
             CLICommand.hookInstall(config: config).arguments,
             ["--config", "/tmp/config.json", "hook", "install"]
         )
+    }
+
+    func testHookRefreshDoesNotEnableDisabledHooks() {
+        let config = URL(fileURLWithPath: "/tmp/config.json")
+        XCTAssertEqual(CLICommand.hookRefresh(config: config).arguments,
+                       ["--config", "/tmp/config.json", "hook", "install", "--if-installed"])
     }
 }

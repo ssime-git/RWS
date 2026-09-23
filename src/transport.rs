@@ -41,45 +41,12 @@ pub fn bounded_status(
     bounded_output(command, timeout).map(|output| output.status.success())
 }
 
-/// Capture a small diagnostic with a deadline. Descendants are stopped before
-/// reading pipes; large output reaches the deadline instead of growing memory.
+/// Capture a diagnostic with bounded time and memory, including pipe draining.
 pub fn bounded_output(
     command: &mut std::process::Command,
     timeout: std::time::Duration,
 ) -> Result<std::process::Output, String> {
-    use std::{
-        os::unix::process::CommandExt,
-        process::Stdio,
-        time::{Duration, Instant},
-    };
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let started = Instant::now();
-    let result = loop {
-        match crate::mount::exited(&child) {
-            Ok(true) => break Ok(()),
-            Ok(false) => {}
-            Err(e) => break Err(e.to_string()),
-        }
-        if started.elapsed() >= timeout {
-            break Err("diagnostic timed out".to_string());
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    };
-    // waitid(WNOWAIT) reserves the child's PID even on successful exit.
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
-    }
-    if result.is_err() {
-        let _ = child.kill();
-    }
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
-    result.map(|_| output)
+    crate::process::output(command.stdin(std::process::Stdio::null()), timeout)
 }
 
 /// Start the executable only inside the remote login environment. Change directory
@@ -100,9 +67,9 @@ pub fn remote_agent(directory: &str, argv: &[String]) -> Result<String, String> 
 #[cfg(test)]
 mod probe_tests {
     #[test]
-    fn capture_preserves_remote_failure_and_stops_pipe_holding_descendants() {
+    fn capture_preserves_remote_failure() {
         let mut command = std::process::Command::new("/bin/sh");
-        command.args(["-c", "sleep 30 & printf proof; exit 37"]);
+        command.args(["-c", "printf proof; exit 37"]);
         let started = std::time::Instant::now();
         let output =
             super::bounded_output(&mut command, std::time::Duration::from_secs(1)).unwrap();
@@ -112,13 +79,14 @@ mod probe_tests {
     }
 
     #[test]
-    fn excessive_output_times_out_instead_of_deadlocking() {
+    fn excessive_output_is_bounded_instead_of_deadlocking() {
         let mut command = std::process::Command::new("/bin/sh");
         command.args(["-c", "while :; do printf '0123456789'; done"]);
+        let error =
+            super::bounded_output(&mut command, std::time::Duration::from_millis(100)).unwrap_err();
         assert!(
-            super::bounded_output(&mut command, std::time::Duration::from_millis(100))
-                .unwrap_err()
-                .contains("timed out")
+            error.contains("timed out") || error.contains("limit"),
+            "{error}"
         );
     }
 

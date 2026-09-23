@@ -1,8 +1,51 @@
 //! Generate the zsh integration that switches into `rws shell` on entering a mount.
-use std::path::Path;
+use std::{
+    fs,
+    io::Write,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 /// Marker comment identifying the .zshrc line managed by `rws hook install`.
 pub const MARKER: &str = "# RWS auto-shell hook";
+
+/// A single active managed hook must match the expected command. Indentation
+/// and trailing personal comments are preserved and do not indicate drift.
+pub fn references_current(zshrc: &Path, rws: &Path, config: Option<&Path>) -> Result<bool, String> {
+    let expected = install_line(rws, config)?;
+    let bytes = match fs::read(zshrc) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("read {}: {e}", zshrc.display())),
+    };
+    let mut active_count = 0;
+    let mut matches = false;
+    for bytes in bytes.split_inclusive(|b| *b == b'\n') {
+        if let Ok(line) = std::str::from_utf8(bytes)
+            && let Some((start, end)) = managed_range(line)
+        {
+            active_count += 1;
+            matches = line[start..end] == expected;
+        }
+    }
+    Ok(active_count == 1 && matches)
+}
+
+fn managed_range(line: &str) -> Option<(usize, usize)> {
+    let active = line.trim_start_matches([' ', '\t']);
+    if !active.starts_with("eval \"$(") {
+        return None;
+    }
+    let marker = active.find(MARKER)?;
+    let start = line.len() - active.len();
+    Some((start, start + marker + MARKER.len()))
+}
+
+/// Refresh active managed hooks only. Return whether any bytes changed.
+pub fn refresh_existing(zshrc: &Path, rws: &Path, config: Option<&Path>) -> Result<bool, String> {
+    update(zshrc, &install_line(rws, config)?, false)
+}
 
 fn quote(label: &str, path: &Path) -> Result<String, String> {
     let raw = path.to_str().ok_or(format!("{label} path must be UTF-8"))?;
@@ -100,29 +143,257 @@ pub fn install_line(rws: &Path, config: Option<&Path>) -> Result<String, String>
 /// Everything else in the file is preserved byte for byte.
 pub fn install(zshrc: &Path, rws: &Path, config: Option<&Path>) -> Result<String, String> {
     let line = install_line(rws, config)?;
-    let existing = match std::fs::read_to_string(zshrc) {
-        Ok(content) => content,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("read {}: {e}", zshrc.display())),
-    };
-    let mut kept: Vec<&str> = existing.lines().filter(|l| !l.contains(MARKER)).collect();
-    while kept.last().is_some_and(|l| l.is_empty()) {
-        kept.pop();
-    }
-    let mut content = kept.join("\n");
-    if !content.is_empty() {
-        content.push('\n');
-    }
-    content.push_str(&line);
-    content.push('\n');
-    std::fs::write(zshrc, content).map_err(|e| format!("write {}: {e}", zshrc.display()))?;
+    update(zshrc, &line, true)?;
     Ok(line)
+}
+
+fn update(zshrc: &Path, replacement: &str, append_missing: bool) -> Result<bool, String> {
+    // Resolve existing symlinks once and replace the regular target, retaining
+    // the user's symlink. Refuse dangling symlinks rather than overwrite them.
+    let target = match fs::symlink_metadata(zshrc) {
+        Ok(_) => {
+            fs::canonicalize(zshrc).map_err(|e| format!("resolve {}: {e}", zshrc.display()))?
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if !append_missing {
+                return Ok(false);
+            }
+            zshrc.to_path_buf()
+        }
+        Err(e) => return Err(format!("inspect {}: {e}", zshrc.display())),
+    };
+    let metadata = match fs::metadata(&target) {
+        Ok(m) if m.is_file() => Some(m),
+        Ok(_) => return Err("shell hook target must be a regular file".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("inspect shell hook: {e}")),
+    };
+    let original = if metadata.is_some() {
+        fs::read(&target).map_err(|e| format!("read shell hook: {e}"))?
+    } else {
+        Vec::new()
+    };
+    let mut updated = Vec::new();
+    let mut found = false;
+    for bytes in original.split_inclusive(|b| *b == b'\n') {
+        // Non-UTF-8 user content is unrelated to our generated UTF-8 line.
+        if let Ok(line) = std::str::from_utf8(bytes)
+            && let Some((start, end)) = managed_range(line)
+        {
+            if found {
+                return Err("duplicate active RWS hooks; keep exactly one active managed hook in the shell file, then retry repair (file left unchanged)".into());
+            }
+            found = true;
+            updated.extend_from_slice(&bytes[..start]);
+            updated.extend_from_slice(replacement.as_bytes());
+            updated.extend_from_slice(&bytes[end..]);
+            continue;
+        }
+        updated.extend_from_slice(bytes);
+    }
+    if !found && append_missing {
+        if !updated.is_empty() && !updated.ends_with(b"\n") {
+            updated.push(b'\n');
+        }
+        updated.extend_from_slice(replacement.as_bytes());
+        updated.push(b'\n');
+    }
+    if updated == original {
+        return Ok(false);
+    }
+    let parent = target
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    if metadata.is_some() {
+        exclusive_file(parent, ".rws-hook-backup", &original, None)?;
+    }
+    let temporary = exclusive_file(
+        parent,
+        ".rws-hook",
+        &updated,
+        metadata.as_ref().map(|m| m.permissions()),
+    )?;
+    let result = (|| {
+        // Detect changes during preparation, including a replaced symlink target.
+        match (&metadata, fs::symlink_metadata(&target)) {
+            (Some(before), Ok(now))
+                if now.is_file() && before.dev() == now.dev() && before.ino() == now.ino() =>
+            {
+                if fs::read(&target).map_err(|e| e.to_string())? != original {
+                    return Err("shell hook changed during update; left unchanged".into());
+                }
+            }
+            (None, Err(e)) if e.kind() == std::io::ErrorKind::NotFound => (),
+            _ => return Err("shell hook target changed during update; left unchanged".into()),
+        }
+        fs::rename(&temporary, &target).map_err(|e| format!("replace shell hook: {e}"))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result.map(|_| true)
+}
+
+fn exclusive_file(
+    parent: &Path,
+    prefix: &str,
+    contents: &[u8],
+    permissions: Option<fs::Permissions>,
+) -> Result<PathBuf, String> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    for attempt in 0..100 {
+        let path = parent.join(format!(
+            "{prefix}-{timestamp}-{}-{attempt}",
+            std::process::id()
+        ));
+        match fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                let result = (|| {
+                    file.write_all(contents)?;
+                    if let Some(permissions) = permissions {
+                        file.set_permissions(permissions)?;
+                    }
+                    file.sync_all()
+                })();
+                if let Err(error) = result {
+                    let _ = fs::remove_file(&path);
+                    return Err(format!("write {}: {error}", path.display()));
+                }
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("create {}: {e}", path.display())),
+        }
+    }
+    Err("could not reserve unique shell hook file".into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn current_hook_accepts_indent_and_comments_but_not_duplicates() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".zshrc");
+        let binary = Path::new("/opt/rws");
+        let line = install_line(binary, None).unwrap();
+        assert!(!references_current(&path, binary, None).unwrap());
+        std::fs::write(&path, format!("# {line}\n  {line} # keep me\r\n")).unwrap();
+        assert!(references_current(&path, binary, None).unwrap());
+        assert!(!references_current(&path, Path::new("/new/rws"), None).unwrap());
+        std::fs::write(&path, format!("{line}\n\t{line}\n")).unwrap();
+        assert!(!references_current(&path, binary, None).unwrap());
+        std::fs::write(&path, format!("# {line}\n")).unwrap();
+        assert!(!references_current(&path, binary, None).unwrap());
+    }
+
+    #[test]
+    fn duplicate_hook_repair_refuses_without_changing_user_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".zshrc");
+        let old = install_line(Path::new("/old/rws"), None).unwrap();
+        let original = format!("{old} # first\n# {old}\n{old} # second\n");
+        fs::write(&path, &original).unwrap();
+        let error = refresh_existing(&path, Path::new("/new/rws"), None).unwrap_err();
+        assert!(
+            error.contains("duplicate") && error.contains("one active"),
+            "{error}"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn refresh_preserves_bytes_comments_and_disabled_hooks() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".zshrc");
+        let old = install_line(Path::new("/old/rws"), None).unwrap();
+        let before =
+            format!("# disabled: {old}\r\n\r\n  {old} # personal note\r\n\nexport X=1\n\n");
+        std::fs::write(&path, &before).unwrap();
+        assert!(refresh_existing(&path, Path::new("/new/rws"), None).unwrap());
+        let expected = before.replacen(
+            &format!("  {old}"),
+            &format!("  {}", install_line(Path::new("/new/rws"), None).unwrap()),
+            1,
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert!(!refresh_existing(&path, Path::new("/new/rws"), None).unwrap());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            metadata.modified().unwrap()
+        );
+    }
+
+    #[test]
+    fn refresh_missing_and_disabled_are_untouched_but_install_enables() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".zshrc");
+        assert!(!refresh_existing(&path, Path::new("/new/rws"), None).unwrap());
+        assert!(!path.exists());
+        let original = format!(
+            "# {}\n\n\n",
+            install_line(Path::new("/old/rws"), None).unwrap()
+        );
+        std::fs::write(&path, &original).unwrap();
+        assert!(!refresh_existing(&path, Path::new("/new/rws"), None).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        install(&path, Path::new("/new/rws"), None).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!(
+                "{original}{}\n",
+                install_line(Path::new("/new/rws"), None).unwrap()
+            )
+        );
+    }
+
+    #[test]
+    fn refresh_symlink_preserves_target_permissions_and_backup() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".zshrc");
+        let target = temp.path().join("real-zshrc");
+        let original = install_line(Path::new("/old/rws"), None).unwrap();
+        std::fs::write(&target, &original).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+        symlink("real-zshrc", &path).unwrap();
+        refresh_existing(&path, Path::new("/new/rws"), None).unwrap();
+        assert!(
+            std::fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+        let backups: Vec<_> = std::fs::read_dir(temp.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(".rws-hook-backup-")
+            })
+            .collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(std::fs::read_to_string(&backups[0]).unwrap(), original);
+    }
 
     #[test]
     fn snippet_bakes_config_path_used_when_rws_config_is_unset() {

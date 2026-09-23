@@ -190,8 +190,27 @@ final class AppModel: ObservableObject {
     /// installed here — first installation stays an explicit user action.
     private func refreshIntegrations() async {
         guard configurationReady else { return }
+        // Update the durable CLI from this app's bundled version on relaunch.
+        // A deliberately selected custom configuration stays custom.
+        if configurationURL.resolvingSymlinksInPath() == Self.defaultConfigurationURL.resolvingSymlinksInPath() {
+            do {
+                let result = try await runner.run(executable: cliURL,
+                    arguments: CLICommand.installDurable(config: configurationURL).arguments)
+                guard result.exitCode == 0 else {
+                    alertMessage = "Mise à jour du setup RWS impossible : \(result.stderr)"
+                    return
+                }
+                // Installation can activate a new SSHFS generation. Never keep
+                // exporting the previous generation as a conflicting override.
+                load()
+                await checkPrerequisites()
+            } catch {
+                alertMessage = "Mise à jour du setup RWS impossible : \(error.localizedDescription)"
+                return
+            }
+        }
         if preferences.object(forKey: "installShellHook") as? Bool ?? true {
-            await runIntegration(.hookInstall(config: configurationURL),
+            await runIntegration(.hookRefresh(config: configurationURL),
                                  failure: "Intégration terminal non installée")
         }
         if preferences.object(forKey: "refreshDeltaRules") as? Bool ?? true {
@@ -202,7 +221,9 @@ final class AppModel: ObservableObject {
 
     private func runIntegration(_ command: CLICommand, failure: String) async {
         do {
-            let result = try await runner.run(executable: cliURL, arguments: command.arguments)
+            let durable = Self.defaultConfigurationURL.deletingLastPathComponent().appendingPathComponent("bin/rws")
+            let integrationCLI = configurationURL.resolvingSymlinksInPath() == Self.defaultConfigurationURL.resolvingSymlinksInPath() ? durable : cliURL
+            let result = try await runner.run(executable: integrationCLI, arguments: command.arguments)
             if result.exitCode != 0 {
                 output = "\(failure) : \(result.stderr.isEmpty ? result.stdout : result.stderr)"
             }
@@ -235,11 +256,10 @@ final class AppModel: ObservableObject {
     /// cannot disturb a healthy volume.
     func repairSelected() async {
         guard configurationReady, prerequisitesReady, let selectedWorkspace else { return }
-        let succeeded = await perform(.connectRepair(config: configurationURL, workspace: selectedWorkspace), refreshAfter: false)
-        if succeeded {
-            output = "Montage réparé pour \(selectedWorkspace) : volume mort éjecté puis remonté."
-        }
+        await perform(.connectRepair(config: configurationURL, workspace: selectedWorkspace), refreshAfter: false, operationTimeout: .seconds(180))
+        let repairReport = output
         await refreshStatus()
+        output = repairReport + "\n" + output
     }
 
     func disconnectSelected() async {
@@ -321,7 +341,7 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func perform(_ command: CLICommand, refreshAfter: Bool = true, allowDuringUpdatePreparation: Bool = false) async -> Bool {
+    private func perform(_ command: CLICommand, refreshAfter: Bool = true, allowDuringUpdatePreparation: Bool = false, operationTimeout: Duration? = nil) async -> Bool {
         guard !operationStateUncertain else {
             alertMessage = "A previous RWS process exceeded its deadline. Restart RWS before starting another operation."
             return false
@@ -331,7 +351,8 @@ final class AppModel: ObservableObject {
         safeToTerminate = false
         await updateGuard.beginOperation()
         do {
-            let result = try await runner.run(executable: cliURL, arguments: command.arguments, environmentOverrides: detectedSSHFS.map { ["RWS_SSHFS": $0] } ?? [:])
+            let operationRunner = operationTimeout.map { ProcessRunner(timeout: $0) } ?? runner
+            let result = try await operationRunner.run(executable: cliURL, arguments: command.arguments, environmentOverrides: detectedSSHFS.map { ["RWS_SSHFS": $0] } ?? [:])
             output = [result.stdout, result.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
             if result.outputWasTruncated { output += "\n[Output truncated]" }
             guard result.exitCode == 0 else {
