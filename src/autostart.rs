@@ -111,7 +111,13 @@ fn existing_managed(directory: &Path) -> Result<Option<String>, String> {
         })
         .map(|line| format!("{line}\n"))
         .collect();
-    Ok((contents == current || contents == legacy).then_some(contents))
+    let old = current.replace("<key>StartInterval</key><integer>30</integer>\n", "");
+    let old_without_logs = legacy.replace("<key>StartInterval</key><integer>30</integer>\n", "");
+    Ok((contents == current
+        || contents == legacy
+        || contents == old
+        || contents == old_without_logs)
+        .then_some(contents))
 }
 
 fn xml(value: &str) -> String {
@@ -134,6 +140,7 @@ pub fn plist(binary: &Path) -> Result<String, String> {
 <key>Label</key><string>{LABEL}</string>
 <key>ProgramArguments</key><array><string>{}</string><string>autostart</string><string>run</string></array>
 <key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict><key>ThrottleInterval</key><integer>30</integer>
+<key>StartInterval</key><integer>30</integer>
 <key>StandardOutPath</key><string>{}</string>
 <key>StandardErrorPath</key><string>{}</string>
 </dict></plist>
@@ -243,6 +250,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn migrates_exact_pre_interval_agents_with_or_without_logs() {
+        let temp = tempfile::tempdir().unwrap();
+        let binary = temp.path().join("RWS/bin/rws");
+        let current = plist(&binary).unwrap();
+        for with_logs in [true, false] {
+            let old = current
+                .lines()
+                .filter(|line| {
+                    !line.contains("StartInterval")
+                        && (with_logs
+                            || (!line.contains("StandardOutPath")
+                                && !line.contains("StandardErrorPath")))
+                })
+                .map(|line| format!("{line}\n"))
+                .collect::<String>();
+            let target = temp.path().join(PLIST_FILENAME);
+            fs::write(&target, old).unwrap();
+            assert_eq!(status(temp.path(), &binary).unwrap(), Status::Stale);
+            assert!(refresh_existing(temp.path(), &binary).unwrap());
+            assert_eq!(fs::read_to_string(target).unwrap(), current);
+        }
+    }
+
+    #[test]
     fn refresh_only_updates_recognized_existing_generic_agent() {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path().join("LaunchAgents");
@@ -309,6 +340,7 @@ mod tests {
     #[test]
     fn plist_starts_the_generic_autostart_runner() {
         let text = plist(Path::new("/opt/rws")).unwrap();
+        assert!(text.contains("<key>StartInterval</key><integer>30</integer>"));
         assert!(text.contains("<key>Label</key><string>io.rws.mounts</string>"));
         assert!(text.contains(
             "<key>ProgramArguments</key><array><string>/opt/rws</string><string>autostart</string><string>run</string></array>"

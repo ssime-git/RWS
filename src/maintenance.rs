@@ -1,4 +1,6 @@
 //! Read-only diagnostics and explicit, evidence-based maintenance.
+#[path = "launchd_status.rs"]
+mod launchd_status;
 use super::*;
 use serde::Serialize;
 use std::{
@@ -86,9 +88,10 @@ fn diagnose(path: &Path, selected: Option<&str>) -> Vec<Check> {
                 rws::autostart::Status::Custom => {
                     Ok("custom or disabled plist preserved; not reconciled".into())
                 }
-                rws::autostart::Status::Current => {
-                    Ok("on-disk configuration current; loaded launchd state not checked".into())
-                }
+                rws::autostart::Status::Current => launchd_status::verify(
+                    &layout.binary(),
+                    &home.join("Library/LaunchAgents/io.rws.mounts.plist"),
+                ),
                 rws::autostart::Status::Stale => {
                     Err("stale on-disk configuration; run repair (effective at next login)".into())
                 }
@@ -442,7 +445,10 @@ pub(super) fn execute(
                     continue;
                 }
                 let mut command = Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
-                command.arg("--config").arg(path).args(["connect", &w.name]);
+                command
+                    .arg("--config")
+                    .arg(path)
+                    .args(["connect", &w.name, "--if-desired"]);
                 if health.is_some_and(|c| c.detail.starts_with("verified but unresponsive:")) {
                     command.arg("--repair");
                 }

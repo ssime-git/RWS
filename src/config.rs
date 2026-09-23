@@ -3,12 +3,13 @@ use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::{
+    collections::BTreeMap,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub version: u32,
@@ -17,6 +18,16 @@ pub struct Config {
     pub mount: MountOptions,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mount_state_generation: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mount_intent: BTreeMap<String, MountIntent>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MountIntent {
+    #[default]
+    Connected,
+    Paused,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -36,6 +47,7 @@ impl Config {
                     workspaces: vec![],
                     mount: MountOptions::default(),
                     mount_state_generation: None,
+                    mount_intent: BTreeMap::new(),
                 });
             }
             Err(e) => return Err(format!("read config: {e}")),
@@ -102,10 +114,26 @@ impl Config {
             Ok(())
         })
     }
-    fn update(
+    pub fn mount_intent(&self, name: &str) -> MountIntent {
+        self.mount_intent.get(name).copied().unwrap_or_default()
+    }
+    pub fn set_mount_intent(path: &Path, name: &str, intent: MountIntent) -> Result<(), String> {
+        Self::update(path, |config| {
+            config.find(name)?;
+            config.mount_intent.insert(name.into(), intent);
+            Ok(())
+        })
+    }
+    pub(crate) fn update(
         path: &Path,
         change: impl FnOnce(&mut Self) -> Result<(), String>,
     ) -> Result<(), String> {
+        let resolved = match path.canonicalize() {
+            Ok(resolved) => resolved,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => path.to_path_buf(),
+            Err(error) => return Err(format!("resolve configuration: {error}")),
+        };
+        let path = resolved.as_path();
         let parent = path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
@@ -195,6 +223,30 @@ impl Drop for Lock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mount_intent_roundtrips_and_preserves_other_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        fs::write(&path, br#"{"version":1,"workspaces":[{"name":"demo","host":"host","remote_root":"/srv/demo","mount_root":"/Volumes/demo"}],"mount":{"fskit":true,"sshfs":"/opt/sshfs"},"mount_state_generation":"release"}"#).unwrap();
+        assert_eq!(
+            Config::load(&path).unwrap().mount_intent("demo"),
+            MountIntent::Connected
+        );
+        Config::set_mount_intent(&path, "demo", MountIntent::Paused).unwrap();
+        let config = Config::load(&path).unwrap();
+        assert_eq!(config.mount_intent("demo"), MountIntent::Paused);
+        assert!(config.mount.fskit);
+        assert_eq!(config.mount_state_generation.as_deref(), Some("release"));
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains("\"demo\": \"paused\"")
+        );
+        let before = fs::read(&path).unwrap();
+        assert!(Config::set_mount_intent(&path, "unknown", MountIntent::Connected).is_err());
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
 
     #[test]
     fn rejects_an_unsafe_mount_state_generation() {
