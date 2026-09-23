@@ -824,10 +824,11 @@ fn status_distinguishes_mount_from_execution_and_disconnect_is_repeatable() {
     let config = temp.path().join("config.json");
     register(&config, &temp.path().join("mount"));
     let out = run(&config, &["status", "demo", "--no-probe"]);
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
+    // Unsupported mount inspection is an error, not a healthy status. macOS
+    // can positively establish that this test workspace is disconnected.
+    assert_eq!(
+        out.status.code(),
+        Some(if cfg!(target_os = "macos") { 0 } else { 1 })
     );
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(
