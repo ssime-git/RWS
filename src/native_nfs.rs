@@ -60,6 +60,26 @@ pub fn mount_args(workspace: &Workspace, endpoint: &str) -> Result<Vec<String>, 
     ])
 }
 
+/// A newly mounted macOS NFS volume can take one failed first read to finish
+/// negotiating, particularly while another export mounts concurrently. Retry
+/// only that bounded read timeout. Any mismatch, identity change, or failed
+/// remote challenge cleanup remains a hard failure.
+pub fn attest(w: &Workspace, identity: &MountIdentity) -> Result<(), String> {
+    retry_initial_read_timeout(|| crate::lifecycle::attest(w, identity))
+}
+
+fn retry_initial_read_timeout(mut check: impl FnMut() -> Result<(), String>) -> Result<(), String> {
+    match check() {
+        Err(first) if first.contains("/bin/cat timed out after 12s") => {
+            eprintln!("NFS initial proof read timed out; retrying once");
+            check().map_err(|second| {
+                format!("initial NFS proof read timed out; retry failed: {second}")
+            })
+        }
+        result => result,
+    }
+}
+
 pub fn matches_source(_workspace: &Workspace, identity: &MountIdentity) -> bool {
     identity.filesystem == "nfs"
         && identity
@@ -232,6 +252,30 @@ mod tests {
         );
         assert!(parse_ssh_hostname("hostname host:/other\n").is_err());
         assert!(source("host:/other").is_err());
+    }
+
+    #[test]
+    fn retries_only_a_transient_initial_nfs_read_timeout() {
+        let mut attempts = 0;
+        assert!(
+            retry_initial_read_timeout(|| {
+                attempts += 1;
+                if attempts == 1 {
+                    Err("/bin/cat timed out after 12s".into())
+                } else {
+                    Ok(())
+                }
+            })
+            .is_ok()
+        );
+        assert_eq!(attempts, 2);
+        let mut attempts = 0;
+        let result = retry_initial_read_timeout(|| {
+            attempts += 1;
+            Err("mounted files do not match the configured SSH destination".into())
+        });
+        assert!(result.is_err());
+        assert_eq!(attempts, 1);
     }
 
     #[test]

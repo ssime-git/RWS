@@ -852,7 +852,7 @@ fn mount_native_nfs(
                 }
             }
         } else if verify_existing {
-            rws::lifecycle::attest(w, &actual)?;
+            rws::native_nfs::attest(w, &actual)?;
             rws::lifecycle::record(path, config, w, actual)?;
             println!("Existing NFS volume verified and connected: {}", w.name);
             return Ok(0);
@@ -895,7 +895,7 @@ fn mount_native_nfs(
     if !rws::native_nfs::matches_source(w, &actual) {
         return Err("NFS mount source did not match workspace; no ownership receipt saved".into());
     }
-    rws::lifecycle::attest(w, &actual)
+    rws::native_nfs::attest(w, &actual)
         .map_err(|error| format!("NFS volume mounted but cross-host verification failed: {error}; no ownership receipt saved"))?;
     rws::lifecycle::record(path, config, w, actual)?;
     println!(

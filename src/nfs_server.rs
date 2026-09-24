@@ -159,7 +159,7 @@ pub fn run(workspace: &Workspace, action: Action, dry_run: bool) -> Result<(), S
         &workspace.host,
         &remote_command,
     ]);
-    let result = process::run(&mut execute, Duration::from_secs(600));
+    let result = process::run_interactive(&mut execute, Duration::from_secs(600));
     let mut cleanup = ssh(&workspace.host);
     cleanup.arg(format!("rm -- {}", quote(staged)));
     let cleanup_result = captured(&mut cleanup, Duration::from_secs(20));

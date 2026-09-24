@@ -27,37 +27,44 @@ gid=$(id -g "$SUDO_USER")
 [[ $(tailscale ip -4 | head -n 1) == "$server_ip" ]] || { echo 'Server Tailscale IP differs from the SSH endpoint' >&2; exit 2; }
 export_file=/etc/exports.d/rws.exports
 config_file=/etc/nfs.conf.d/rws.conf
+dropin_dir=/etc/systemd/system/nfs-server.service.d
+dropin_file=$dropin_dir/rws.conf
+expected_dropin=$(printf '[Unit]\nWants=tailscale-online.target\nAfter=tailscale-online.target\n[Service]\nExecStartPre=/usr/bin/tailscale ip --assert=%s' "$server_ip")
 expected_export="$remote_root $client_ip(rw,sync,fsid=0,no_subtree_check,all_squash,anonuid=$uid,anongid=$gid,insecure)"
 expected_config=$(printf '[nfsd]\nhost=%s\nvers3=n\nvers4=y' "$server_ip")
 if [[ $action == remove ]]; then
   [[ -f $export_file && ! -L $export_file && $(cat "$export_file") == "$expected_export" ]] || { echo 'Managed export changed or absent; refusing removal' >&2; exit 2; }
   [[ -f $config_file && ! -L $config_file && $(cat "$config_file") == "$expected_config" ]] || { echo 'Managed NFS config changed or absent; refusing removal' >&2; exit 2; }
+  [[ -f $dropin_file && ! -L $dropin_file && $(cat "$dropin_file") == "$expected_dropin" ]] || { echo 'Managed boot ordering changed or absent; refusing removal' >&2; exit 2; }
+  [[ $(find "$dropin_dir" -maxdepth 1 -type f | wc -l) -eq 1 ]] || { echo 'Other NFS boot configuration exists; refusing to stop NFS' >&2; exit 2; }
   [[ $(find /etc/exports.d -maxdepth 1 -type f | wc -l) -eq 1 ]] || { echo 'Other exports exist; refusing to stop NFS' >&2; exit 2; }
   [[ $(find /etc/nfs.conf.d -maxdepth 1 -type f | wc -l) -eq 1 ]] || { echo 'Other NFS configuration exists; refusing to stop NFS' >&2; exit 2; }
   if [[ -f /etc/exports ]] && awk 'NF && $1 !~ /^#/ { found=1 } END { exit !found }' /etc/exports; then
     echo 'System exports exist; refusing to stop NFS' >&2; exit 2
   fi
   systemctl disable --now nfs-server
-  rm -- "$export_file" "$config_file"
-  echo 'RWS export disabled and its two managed configuration files removed; remote data and nfs-utils retained.'
+  rm -- "$export_file" "$config_file" "$dropin_file"
+  systemctl daemon-reload
+  echo 'RWS export disabled and its three managed configuration files removed; remote data and nfs-utils retained.'
   exit 0
 fi
-if [[ -f $export_file && ! -L $export_file && -f $config_file && ! -L $config_file && $(cat "$export_file") == "$expected_export" && $(cat "$config_file") == "$expected_config" ]]; then
+if [[ -f $export_file && ! -L $export_file && -f $config_file && ! -L $config_file && -f $dropin_file && ! -L $dropin_file && $(cat "$export_file") == "$expected_export" && $(cat "$config_file") == "$expected_config" && $(cat "$dropin_file") == "$expected_dropin" ]]; then
   [[ $(systemctl is-active nfs-server) == active ]] || systemctl enable --now nfs-server
   echo 'RWS NFS export is already configured.'
   exit 0
 fi
-[[ ! -e $export_file && ! -L $export_file && ! -e $config_file && ! -L $config_file ]] || { echo 'Managed NFS config exists with different content; refusing overwrite' >&2; exit 2; }
+[[ ! -e $export_file && ! -L $export_file && ! -e $config_file && ! -L $config_file && ! -e $dropin_file && ! -L $dropin_file ]] || { echo 'Managed NFS config exists with different content; refusing overwrite' >&2; exit 2; }
 [[ $(systemctl is-active nfs-server 2>/dev/null || true) != active ]] || { echo 'NFS service already active; refusing to alter it' >&2; exit 2; }
 if [[ -f /etc/exports ]] && awk 'NF && $1 !~ /^#/ { found=1 } END { exit !found }' /etc/exports; then
   echo 'System exports already configured; refusing to alter NFS' >&2; exit 2
 fi
 [[ ! -d /etc/exports.d || $(find /etc/exports.d -maxdepth 1 -type f | wc -l) -eq 0 ]] || { echo 'Other exports already configured; refusing to alter NFS' >&2; exit 2; }
 [[ ! -d /etc/nfs.conf.d || $(find /etc/nfs.conf.d -maxdepth 1 -type f | wc -l) -eq 0 ]] || { echo 'Other NFS configuration already exists; refusing to alter NFS' >&2; exit 2; }
+[[ ! -d $dropin_dir || $(find "$dropin_dir" -maxdepth 1 -type f | wc -l) -eq 0 ]] || { echo 'Other NFS boot configuration already exists; refusing to alter NFS' >&2; exit 2; }
 was_enabled=$(systemctl is-enabled nfs-server 2>/dev/null || true)
 [[ $was_enabled != enabled ]] || { echo 'NFS service is already enabled; refusing to take ownership' >&2; exit 2; }
 pacman -S --needed --noconfirm nfs-utils
-install -d -m 755 /etc/exports.d /etc/nfs.conf.d
+install -d -m 755 /etc/exports.d /etc/nfs.conf.d "$dropin_dir"
 created=0
 rollback() {
   if (( created )); then
@@ -65,13 +72,17 @@ rollback() {
     if [[ $was_enabled != enabled ]]; then systemctl disable nfs-server || true; fi
     [[ $(cat "$export_file" 2>/dev/null || true) == "$expected_export" ]] && rm -f -- "$export_file"
     [[ $(cat "$config_file" 2>/dev/null || true) == "$expected_config" ]] && rm -f -- "$config_file"
+    [[ $(cat "$dropin_file" 2>/dev/null || true) == "$expected_dropin" ]] && rm -f -- "$dropin_file"
+    systemctl daemon-reload || true
   fi
 }
 trap rollback ERR
 created=1
 printf '%s\n' "$expected_export" > "$export_file"
 printf '%s\n' "$expected_config" > "$config_file"
-chmod 644 "$export_file" "$config_file"
+printf '%s\n' "$expected_dropin" > "$dropin_file"
+chmod 644 "$export_file" "$config_file" "$dropin_file"
+systemctl daemon-reload
 systemctl enable --now nfs-server
 systemctl is-active --quiet nfs-server
 exportfs -v | grep -F -- "$remote_root" >/dev/null
