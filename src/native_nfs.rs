@@ -3,43 +3,66 @@
 use crate::{lifecycle::MountIdentity, workspace::Workspace};
 use std::path::Path;
 
-pub fn source(workspace: &Workspace) -> Result<String, String> {
+fn parse_ssh_hostname(output: &str) -> Result<String, String> {
+    let host = output
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .find_map(|(key, value)| (key == "hostname").then_some(value.trim()))
+        .ok_or("SSH configuration did not provide a HostName")?;
+    if host.is_empty()
+        || !host
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+    {
+        return Err("NFS requires an IPv4 address or DNS name in SSH HostName".into());
+    }
+    Ok(host.into())
+}
+
+/// Resolve the same SSH alias used by remote commands. The NFS client does
+/// not read ~/.ssh/config, so passing an unresolved alias to mount_nfs fails.
+pub fn resolve_endpoint(workspace: &Workspace) -> Result<String, String> {
+    use std::{process::Command, time::Duration};
     workspace.validate()?;
-    let host = workspace
-        .host
-        .rsplit_once('@')
-        .map_or(workspace.host.as_str(), |(_, host)| host);
-    if host.is_empty() || host.contains(':') {
-        return Err("NFS requires a DNS or Tailscale host name without a port".into());
+    let output = crate::process::output(
+        Command::new("/usr/bin/ssh").args(["-G", "--", &workspace.host]),
+        Duration::from_secs(5),
+    )?;
+    if !output.status.success() {
+        return Err(format!("resolve SSH host for NFS: {}", output.status));
+    }
+    let output = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+    parse_ssh_hostname(&output)
+}
+
+pub fn source(endpoint: &str) -> Result<String, String> {
+    if endpoint.is_empty()
+        || !endpoint
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+    {
+        return Err("NFS endpoint must be an IPv4 address or DNS name".into());
     }
     // The dedicated Linux export is the NFSv4 pseudoroot (fsid=0). SSH
     // attestation verifies that this root is the configured remote directory.
-    Ok(format!("{host}:/"))
+    Ok(format!("{endpoint}:/"))
 }
 
-pub fn mount_args(workspace: &Workspace) -> Result<Vec<String>, String> {
+pub fn mount_args(workspace: &Workspace, endpoint: &str) -> Result<Vec<String>, String> {
     validate_mountpoint_path(workspace)?;
     Ok(vec![
         "-o".into(),
-        // Hard mounts preserve write errors rather than returning success after
-        // a network timeout. Recovery must be observed via bounded health probes.
-        "vers=4.1,tcp,hard,nfc,port=2049".into(),
-        source(workspace)?,
+        // NFSv4.0 with callbacks disabled passed the real Arch export trial.
+        // intr permits the test process to be stopped if server I/O stalls.
+        "vers=4.0,tcp,hard,intr,nocallback,nfc,port=2049".into(),
+        source(endpoint)?,
         workspace.mount_root.to_string_lossy().into_owned(),
     ])
 }
 
-pub fn matches_source(workspace: &Workspace, identity: &MountIdentity) -> bool {
-    if identity.filesystem != "nfs" {
-        return false;
-    }
-    let Ok(source) = source(workspace) else {
-        return false;
-    };
-    // The mount table may replace a DNS name with an IP address. An SSH
-    // challenge attests the first mount; receipts pin the full identity later.
-    identity.source == source
-        || identity
+pub fn matches_source(_workspace: &Workspace, identity: &MountIdentity) -> bool {
+    identity.filesystem == "nfs"
+        && identity
             .source
             .rsplit_once(':')
             .is_some_and(|(host, export)| !host.is_empty() && export == "/")
@@ -180,11 +203,11 @@ mod tests {
     #[test]
     fn command_uses_native_nfs_and_preserves_exact_paths() {
         assert_eq!(
-            mount_args(&workspace()).unwrap(),
+            mount_args(&workspace(), "100.106.23.6").unwrap(),
             [
                 "-o",
-                "vers=4.1,tcp,hard,nfc,port=2049",
-                "devbox:/",
+                "vers=4.0,tcp,hard,intr,nocallback,nfc,port=2049",
+                "100.106.23.6:/",
                 "/Volumes/RWS-demo"
             ]
         );
@@ -196,9 +219,19 @@ mod tests {
         assert!(validate_mountpoint_path(&w).is_ok());
         w.mount_root = PathBuf::from("/Volumes/Other");
         assert!(validate_mountpoint_path(&w).is_err());
-        assert!(mount_args(&w).is_err());
+        assert!(mount_args(&w, "100.106.23.6").is_err());
         w.mount_root = PathBuf::from("/private/tmp/RWS-demo");
         assert!(validate_mountpoint_path(&w).is_err());
+    }
+
+    #[test]
+    fn ssh_hostname_resolution_rejects_invalid_endpoints() {
+        assert_eq!(
+            parse_ssh_hostname("user razer\nhostname 100.106.23.6\n").unwrap(),
+            "100.106.23.6"
+        );
+        assert!(parse_ssh_hostname("hostname host:/other\n").is_err());
+        assert!(source("host:/other").is_err());
     }
 
     #[test]

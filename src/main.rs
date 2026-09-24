@@ -783,7 +783,8 @@ fn mount_native_nfs(
     if !cfg!(target_os = "macos") {
         return Err("native NFS mounting is supported on macOS only".into());
     }
-    let args = rws::native_nfs::mount_args(w)?;
+    let endpoint = rws::native_nfs::resolve_endpoint(w)?;
+    let args = rws::native_nfs::mount_args(w, &endpoint)?;
     if dry_run {
         return invoke("/sbin/mount_nfs", &args, true, false);
     }
