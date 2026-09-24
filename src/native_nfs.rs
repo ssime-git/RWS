@@ -18,6 +18,7 @@ pub fn source(workspace: &Workspace) -> Result<String, String> {
 }
 
 pub fn mount_args(workspace: &Workspace) -> Result<Vec<String>, String> {
+    validate_mountpoint_path(workspace)?;
     Ok(vec![
         "-o".into(),
         // Hard mounts preserve write errors rather than returning success after
@@ -195,6 +196,7 @@ mod tests {
         assert!(validate_mountpoint_path(&w).is_ok());
         w.mount_root = PathBuf::from("/Volumes/Other");
         assert!(validate_mountpoint_path(&w).is_err());
+        assert!(mount_args(&w).is_err());
         w.mount_root = PathBuf::from("/private/tmp/RWS-demo");
         assert!(validate_mountpoint_path(&w).is_err());
     }
