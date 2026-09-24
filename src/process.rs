@@ -22,6 +22,39 @@ pub fn run(command: &mut Command, timeout: Duration) -> Result<ExitStatus, Strin
     result
 }
 
+/// Run a program that must read from the foreground terminal, such as SSH
+/// prompting for remote sudo. It must inherit the caller's process group:
+/// placing it in a new group makes terminal input deliver SIGTTIN instead.
+/// SSH has no local descendants to clean up, so timeout kills only its PID.
+pub fn run_interactive(command: &mut Command, timeout: Duration) -> Result<ExitStatus, String> {
+    let start = Instant::now();
+    let program = command.get_program().to_string_lossy().into_owned();
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("could not start {program}: {error}"))?;
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("could not poll {program}: {error}"))?
+        {
+            return Ok(status);
+        }
+        let remaining = timeout.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            let _ = child.kill();
+            let _ = thread::Builder::new()
+                .name("rws-interactive-reaper".into())
+                .spawn(move || {
+                    let _ = child.wait();
+                });
+            return Err(format!(
+                "{program} timed out after {timeout:?}; remote completion is unknown"
+            ));
+        }
+        thread::sleep(remaining.min(Duration::from_millis(25)));
+    }
+}
+
 /// Capture both output streams. Pipe draining shares the command's deadline;
 /// a descendant keeping a pipe open cannot cause an unbounded reader join.
 pub fn output(command: &mut Command, timeout: Duration) -> Result<Output, String> {
@@ -78,10 +111,16 @@ fn poll(
         let ready =
             streams_ready().map_err(|error| format!("could not read {program} output: {error}"))?;
         if exited && ready {
-            return child
+            // On macOS waitid(WNOWAIT) can report an exited child one poll
+            // before std::process::Child exposes its status. Retry within the
+            // same deadline rather than converting that transient into a
+            // failed command.
+            if let Some(status) = child
                 .try_wait()
                 .map_err(|error| format!("could not reap {program}: {error}"))?
-                .ok_or_else(|| format!("{program} exit status unavailable"));
+            {
+                return Ok(status);
+            }
         }
         let remaining = timeout.saturating_sub(start.elapsed());
         if remaining.is_zero() {
@@ -166,6 +205,24 @@ mod tests {
     use std::time::Instant;
 
     #[test]
+    fn interactive_runner_reports_status_and_bounds_time() {
+        let status = run_interactive(
+            Command::new("/bin/sh").args(["-c", "exit 7"]),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(status.code(), Some(7));
+        let started = Instant::now();
+        let error = run_interactive(
+            Command::new("/bin/sh").args(["-c", "exec sleep 30"]),
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert!(error.contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
     fn normal_and_nonzero_exit_preserve_stdio() {
         let file = tempfile::NamedTempFile::new().unwrap();
         let mut command = Command::new("sh");
@@ -210,6 +267,19 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(1));
         std::thread::sleep(Duration::from_millis(650));
         assert!(!marker.exists(), "descendant escaped process-group cleanup");
+    }
+
+    #[test]
+    fn rapid_exits_always_report_their_status() {
+        for _ in 0..100 {
+            let output = output(
+                Command::new("/bin/sh").args(["-c", "printf ready"]),
+                Duration::from_secs(2),
+            )
+            .unwrap();
+            assert!(output.status.success());
+            assert_eq!(output.stdout, b"ready");
+        }
     }
 
     #[test]

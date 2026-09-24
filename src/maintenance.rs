@@ -64,7 +64,18 @@ fn diagnose(path: &Path, selected: Option<&str>) -> Vec<Check> {
             },
         ));
     }
-    checks.push(check("sshfs", check_sshfs(path, &config)));
+    if config.mount.nfs {
+        checks.push(check(
+            "native_nfs",
+            if Path::new("/sbin/mount_nfs").is_file() {
+                Ok("macOS native NFS client available".into())
+            } else {
+                Err("macOS native NFS client is missing".into())
+            },
+        ));
+    } else {
+        checks.push(check("sshfs", check_sshfs(path, &config)));
+    }
     match canonical_layout() {
         Ok(layout) => checks.push(check(
             "durable_binary",

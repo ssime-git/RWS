@@ -29,6 +29,20 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertEqual(config.mount.sshfs, "/opt/sshfs")
     }
 
+    func testDecodesNativeNFSConfiguration() throws {
+        let data = #"{"version":1,"workspaces":[],"mount":{"nfs":true,"fskit":false}}"#.data(using: .utf8)!
+        let config = try AppConfiguration.decode(data)
+        XCTAssertTrue(config.mount.nfs)
+        XCTAssertFalse(config.mount.fskit)
+        let encoded = try JSONEncoder().encode(config)
+        XCTAssertTrue(try AppConfiguration.decode(encoded).mount.nfs)
+    }
+
+    func testRejectsNFSAndFSKitTogether() {
+        let data = #"{"version":1,"workspaces":[],"mount":{"nfs":true,"fskit":true}}"#.data(using: .utf8)!
+        XCTAssertThrowsError(try AppConfiguration.decode(data))
+    }
+
     func testDecodesConfigurationFromBeforeMountSettingsWereAdded() throws {
         let data = #"{"version":1,"workspaces":[]}"#.data(using: .utf8)!
         let config = try AppConfiguration.decode(data)

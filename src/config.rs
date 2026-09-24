@@ -36,6 +36,8 @@ pub struct MountOptions {
     pub sshfs: Option<String>,
     #[serde(default)]
     pub fskit: bool,
+    #[serde(default)]
+    pub nfs: bool,
 }
 impl Config {
     pub fn load(path: &Path) -> Result<Self, String> {
@@ -185,6 +187,9 @@ impl MountOptions {
         {
             return Err("saved SSHFS executable must be an absolute path without NUL".into());
         }
+        if self.fskit && self.nfs {
+            return Err("NFS and FSKit cannot both be selected".into());
+        }
         Ok(())
     }
 }
@@ -246,6 +251,18 @@ mod tests {
         let before = fs::read(&path).unwrap();
         assert!(Config::set_mount_intent(&path, "unknown", MountIntent::Connected).is_err());
         assert_eq!(fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn native_nfs_setting_roundtrips_and_rejects_fskit_combination() {
+        let parsed =
+            Config::parse(br#"{"version":1,"workspaces":[],"mount":{"nfs":true}}"#).unwrap();
+        assert!(parsed.mount.nfs);
+        assert!(!parsed.mount.fskit);
+        assert!(
+            Config::parse(br#"{"version":1,"workspaces":[],"mount":{"nfs":true,"fskit":true}}"#)
+                .is_err()
+        );
     }
 
     #[test]
