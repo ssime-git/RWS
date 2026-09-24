@@ -1,7 +1,7 @@
 # RWS native SMB mounts — design
 
 Date: 2026-09-24
-Status: proposed design; no host provisioning or mount backend change authorized by this document alone.
+Status: superseded as an implementation choice by the 2026-09-24 native-mount feasibility results. See `docs/experiments/2026-09-24-native-mount-feasibility.md`. No host provisioning or mount backend change was performed.
 
 ## Goal
 
@@ -16,7 +16,7 @@ The product outcome is one signed/notarized RWS app/CLI distribution that can di
 
 The current installed design uses macFUSE/FSKit + SSHFS. The live Mac is macOS 27.0 arm64; after the recent reboot, `launchd` loads `io.rws.mounts` with a 30-second run interval, Razer is mounted, and Omarchy is disconnected. This is evidence that the existing reconnect mechanism does not reliably restore both volumes after reboot. No global FSKit restart or remote-host mutation is in scope here.
 
-Choose native SMB as the next prototype because it removes the FUSE provider and FSKit mount-table from the client mount path, and macOS has a supported SMB client. Samba exports are scoped to a named share and obey underlying Unix permissions. The user must be told that Linux hosts need Samba service/share configuration and SMB credentials; SSH credentials cannot simply be reused as SMB credentials. Sources: [Apple Login Items support](https://support.apple.com/en-am/guide/mac-help/mh15189/mac), [Samba share configuration](https://www.samba.org/samba/docs/4.20/man-html/smb.conf.5.html).
+Original hypothesis, disproven for RWS Unix project semantics in the linked experiment: choose native SMB as the next prototype because it removes the FUSE provider and FSKit mount-table from the client mount path, and macOS has a supported SMB client. Samba exports are scoped to a named share and obey underlying Unix permissions. The user must be told that Linux hosts need Samba service/share configuration and SMB credentials; SSH credentials cannot simply be reused as SMB credentials. Sources: [Apple Login Items support](https://support.apple.com/en-am/guide/mac-help/mh15189/mac), [Samba share configuration](https://www.samba.org/samba/docs/4.20/man-html/smb.conf.5.html).
 
 A Rust implementation of a FUSE protocol provider would retain the FUSE/FSKit dependency surface and would not remove the demonstrated collision risk. Third-party virtual-drive apps do not meet the fixed-path requirement unless they explicitly support mounting at these `/Volumes` paths and reliable login recovery.
 
