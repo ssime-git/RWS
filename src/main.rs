@@ -206,6 +206,8 @@ enum AutostartAction {
     },
     /// Mount every workspace from the canonical durable configuration.
     Run,
+    #[command(hide = true)]
+    RunOne { workspace: String },
 }
 #[derive(Subcommand)]
 enum WorkspaceAction {
@@ -265,70 +267,70 @@ fn install_autostart(directory: Option<PathBuf>) -> Result<i32, String> {
     Ok(0)
 }
 
+fn run_autostart_one(path: &std::path::Path, workspace: &str) -> Result<i32, String> {
+    Config::load_existing(path)?.find(workspace)?;
+    run_with_origin(
+        Cli {
+            config: Some(path.to_path_buf()),
+            command: Action::Mount {
+                workspace: workspace.into(),
+                if_desired: true,
+                verify_existing: false,
+                repair: false,
+                dry_run: false,
+                fskit: false,
+                raw_names: false,
+            },
+        },
+        OperationOrigin::Automatic,
+    )
+}
+
 fn run_autostart() -> Result<i32, String> {
     if !cfg!(target_os = "macos") {
         return Err("autostart is supported on macOS only".into());
     }
     let path = canonical_layout()?.config_path();
     let config = Config::load_existing(&path)?;
+    let binary = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut failures = Vec::new();
     if let Err(error) = maintenance::refresh_integrations(&path) {
         failures.push(format!("integration refresh: {error}"));
     }
-    let connect = |workspace: String, path: PathBuf| {
-        run_with_origin(
-            Cli {
-                config: Some(path),
-                command: Action::Mount {
-                    workspace,
-                    if_desired: true,
-                    verify_existing: false,
-                    repair: false,
-                    dry_run: false,
-                    fskit: false,
-                    raw_names: false,
-                },
-            },
-            OperationOrigin::Automatic,
-        )
-    };
-    if config.mount.nfs {
-        // Native NFS mounts are independent kernel clients. A slow SSH/NFS
-        // handshake on one host must not postpone another workspace's retry.
-        std::thread::scope(|scope| {
-            let handles: Vec<_> = config
-                .workspaces
-                .iter()
-                .map(|workspace| {
-                    let name = workspace.name.clone();
-                    let path = path.clone();
-                    let worker = scope.spawn({
-                        let name = name.clone();
-                        move || connect(name, path)
-                    });
-                    (name, worker)
-                })
-                .collect();
-            for (name, handle) in handles {
-                match handle.join() {
-                    Ok(Ok(0)) => (),
-                    Ok(Ok(code)) => failures.push(format!("{name} (exit {code})")),
-                    Ok(Err(error)) => failures.push(format!("{name}: {error}")),
-                    Err(_) => failures.push(format!("{name}: mount worker panicked")),
-                }
-            }
-        });
-    } else {
-        // Keep the existing serialized SSHFS/FSKit behavior unchanged.
-        for workspace in &config.workspaces {
-            let name = workspace.name.clone();
-            match connect(name.clone(), path.clone()) {
-                Ok(0) => (),
-                Ok(code) => failures.push(format!("{name} (exit {code})")),
-                Err(error) => failures.push(format!("{name}: {error}")),
+    // launchd skips StartInterval firings while this job remains running.
+    // Execute each workspace in its own process group with a deadline: one
+    // stuck filesystem syscall cannot retain the scheduler or postpone the
+    // other workspace's attempt. A killed but uninterruptible child still
+    // holds its operation lock, so later attempts fail safely rather than
+    // accumulating duplicate mount operations.
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = config
+            .workspaces
+            .iter()
+            .map(|workspace| {
+                let name = workspace.name.clone();
+                let binary = binary.clone();
+                let worker = scope.spawn({
+                    let name = name.clone();
+                    move || {
+                        rws::process::run(
+                            Command::new(binary).args(["autostart", "run-one", &name]),
+                            std::time::Duration::from_secs(90),
+                        )
+                    }
+                });
+                (name, worker)
+            })
+            .collect();
+        for (name, handle) in handles {
+            match handle.join() {
+                Ok(Ok(status)) if status.success() => (),
+                Ok(Ok(status)) => failures.push(format!("{name} ({status})")),
+                Ok(Err(error)) => failures.push(format!("{name}: {error}")),
+                Err(_) => failures.push(format!("{name}: autostart supervisor panicked")),
             }
         }
-    }
+    });
     if failures.is_empty() {
         Ok(0)
     } else {
@@ -338,6 +340,7 @@ fn run_autostart() -> Result<i32, String> {
         ))
     }
 }
+
 fn resolve(config: &Config, name: Option<&str>) -> Result<(Workspace, String), String> {
     if let Some(name) = name {
         let w = config.find(name)?;
@@ -586,6 +589,17 @@ fn run_with_origin(cli: Cli, origin: OperationOrigin) -> Result<i32, String> {
                 );
             }
             return run_autostart();
+        }
+        Action::Autostart {
+            action: AutostartAction::RunOne { workspace },
+        } => {
+            if explicit_config {
+                return Err(
+                    "autostart worker uses the canonical installation; --config is not allowed"
+                        .into(),
+                );
+            }
+            return run_autostart_one(&canonical_layout()?.config_path(), workspace);
         }
         _ => {}
     }
@@ -1492,6 +1506,15 @@ mod maintenance_status_tests {
                 raw_names: false,
             },
         }
+    }
+
+    #[test]
+    fn autostart_worker_respects_paused_intent_without_touching_config() {
+        let (_temp, path) = intent_config();
+        Config::set_mount_intent(&path, "demo", rws::config::MountIntent::Paused).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(run_autostart_one(&path, "demo").unwrap(), 0);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
     #[test]
