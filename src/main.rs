@@ -52,6 +52,10 @@ enum Action {
         backend: Option<Backend>,
     },
     /// Prepare an exact /Volumes directory for native NFS using one sudo prompt.
+    NfsServer {
+        #[command(subcommand)]
+        action: NfsServerAction,
+    },
     NfsPrepare {
         workspace: String,
         #[arg(long)]
@@ -182,6 +186,21 @@ enum Backend {
     Default,
     Fskit,
     Nfs,
+}
+#[derive(Subcommand)]
+enum NfsServerAction {
+    /// Configure an Arch host to export this workspace on Tailscale at boot.
+    Setup {
+        workspace: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Disable only an unchanged RWS export; remote files and nfs-utils remain.
+    Remove {
+        workspace: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 #[derive(Subcommand)]
 enum HookAction {
@@ -912,6 +931,31 @@ fn execute_action(
                     installed.rws.display()
                 );
             }
+            Ok(0)
+        }
+        Action::NfsServer { action } => {
+            if !config.mount.nfs {
+                return Err("select the NFS backend before configuring its server".into());
+            }
+            let (workspace, server_action, dry_run) = match action {
+                NfsServerAction::Setup { workspace, dry_run } => {
+                    (workspace, rws::nfs_server::Action::Setup, dry_run)
+                }
+                NfsServerAction::Remove { workspace, dry_run } => {
+                    (workspace, rws::nfs_server::Action::Remove, dry_run)
+                }
+            };
+            let w = config.find(&workspace)?;
+            if server_action == rws::nfs_server::Action::Remove
+                && rws::lifecycle::identity(&w.mount_root)?
+                    .as_ref()
+                    .is_some_and(|identity| rws::native_nfs::matches_source(w, identity))
+            {
+                return Err(
+                    "disconnect the native NFS volume before removing its server export".into(),
+                );
+            }
+            rws::nfs_server::run(w, server_action, dry_run)?;
             Ok(0)
         }
         Action::NfsPrepare { workspace, dry_run } => {

@@ -245,6 +245,34 @@ final class AppModel: ObservableObject {
         await recheckStartup()
     }
 
+    func prepareSelectedNFSServer() async {
+        guard configuration.mount.nfs, let selectedWorkspace else { return }
+        // Open a real terminal so sudo reads the password from the remote PTY.
+        // AppleScript quotes every argument independently; workspace data is
+        // never interpolated into shell source.
+        let script = """
+        on run argv
+        set commandText to quoted form of (item 1 of argv) & " --config " & quoted form of (item 2 of argv) & " nfs-server setup " & quoted form of (item 3 of argv)
+        tell application "Terminal"
+            activate
+            do script commandText
+        end tell
+        end run
+        """
+        do {
+            let result = try await runner.run(
+                executable: URL(fileURLWithPath: "/usr/bin/osascript"),
+                arguments: ["-e", script, cliURL.path, configurationURL.path, selectedWorkspace])
+            guard result.exitCode == 0 else {
+                alertMessage = "Impossible d’ouvrir Terminal pour préparer NFS : \(result.stderr)"
+                return
+            }
+            output = "La préparation du serveur se déroule dans Terminal. Vérifiez son résultat avant de connecter le volume."
+        } catch {
+            alertMessage = "Impossible d’ouvrir Terminal pour préparer NFS : \(error.localizedDescription)"
+        }
+    }
+
     func prepareSelectedNFS() async {
         guard configuration.mount.nfs, let selectedWorkspace else { return }
         await perform(.nfsPrepare(config: configurationURL, workspace: selectedWorkspace), operationTimeout: .seconds(180))

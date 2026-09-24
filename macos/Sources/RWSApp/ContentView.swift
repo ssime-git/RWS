@@ -143,7 +143,7 @@ struct ContentView: View {
     private var setup: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                Text(useNFS ? "NFS natif utilise le client intégré à macOS. Le serveur Linux et le point de montage doivent être préparés avant la première connexion." : "SSHFS utilise macFUSE et la version corrigée. La détection est automatique ; choisissez un autre exécutable uniquement si nécessaire.")
+                Text(useNFS ? "NFS natif utilise le client intégré à macOS. Préparez le serveur Linux dans Terminal (sudo distant), puis ce Mac, avant la première connexion." : "SSHFS utilise macFUSE et la version corrigée. La détection est automatique ; choisissez un autre exécutable uniquement si nécessaire.")
                     .foregroundStyle(.secondary)
                 HStack {
                     TextField("/absolute/path/to/sshfs", text: $sshfsPath).disabled(useNFS)
@@ -154,6 +154,8 @@ struct ContentView: View {
                 HStack {
                     Button("Enregistrer") { Task { await model.saveSettings(sshfs: sshfsPath, fskit: useFSKit && !useNFS, nfs: useNFS) } }
                         .disabled(!model.configurationReady || (!useNFS && !sshfsPath.hasPrefix("/")))
+                    Button("Préparer le serveur NFS…") { Task { await model.prepareSelectedNFSServer() } }
+                        .disabled(!model.configuration.mount.nfs || model.selectedWorkspace == nil || !model.configurationReady)
                     Button("Préparer ce Mac pour NFS") { Task { await model.prepareSelectedNFS() } }
                         .disabled(!model.configuration.mount.nfs || model.selectedWorkspace == nil || !model.configurationReady)
                     Button("Choisir une configuration…") { importConfig() }
