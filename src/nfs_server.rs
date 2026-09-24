@@ -70,6 +70,17 @@ fn valid_tailscale_ip(address: &str) -> bool {
     parts.len() == 4 && parts[0] == 100
 }
 
+fn digest(output: &str) -> Result<&str, String> {
+    let hash = output
+        .split_whitespace()
+        .next()
+        .ok_or("missing script SHA-256")?;
+    if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("invalid script SHA-256".into());
+    }
+    Ok(hash)
+}
+
 fn stage_path(output: &str) -> Result<&str, String> {
     let path = output.trim();
     if !path.starts_with("/tmp/rws-nfs-stage.")
@@ -111,6 +122,9 @@ pub fn run(workspace: &Workspace, action: Action, dry_run: bool) -> Result<(), S
     local_script
         .write_all(SCRIPT.as_bytes())
         .map_err(|e| e.to_string())?;
+    let mut local_hash = Command::new("/usr/bin/shasum");
+    local_hash.args(["-a", "256"]).arg(local_script.path());
+    let local_hash = digest(&captured(&mut local_hash, Duration::from_secs(10))?)?.to_owned();
     let mut stage = ssh(&workspace.host);
     stage.arg(REMOTE_STAGE);
     stage.stdin(Stdio::from(
@@ -118,6 +132,16 @@ pub fn run(workspace: &Workspace, action: Action, dry_run: bool) -> Result<(), S
     ));
     let staged = captured(&mut stage, Duration::from_secs(30))?;
     let staged = stage_path(&staged)?;
+    let mut remote_hash = ssh(&workspace.host);
+    remote_hash.arg(format!("sha256sum -- {}", quote(staged)));
+    let remote_hash = captured(&mut remote_hash, Duration::from_secs(20))
+        .and_then(|output| digest(&output).map(str::to_owned));
+    if remote_hash.as_deref() != Ok(local_hash.as_str()) {
+        let mut cleanup = ssh(&workspace.host);
+        cleanup.arg(format!("rm -- {}", quote(staged)));
+        let _ = captured(&mut cleanup, Duration::from_secs(20));
+        return Err("remote NFS setup script failed SHA-256 verification; sudo was not run".into());
+    }
     let remote_command = format!(
         "sudo /bin/bash {} {} {} {} {}",
         quote(staged),
@@ -163,6 +187,13 @@ mod tests {
         );
         assert!(stage_path("/tmp/rws-nfs-stage.ok; touch /tmp/evil").is_err());
         assert!(stage_path("/etc/exports").is_err());
+    }
+
+    #[test]
+    fn validates_a_complete_sha256_before_trusting_transfer() {
+        assert!(digest(&format!("{}  script.sh", "a".repeat(64))).is_ok());
+        assert!(digest("bad  script.sh").is_err());
+        assert!(digest(&format!("{}  script.sh", "z".repeat(64))).is_err());
     }
 
     #[test]
