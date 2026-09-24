@@ -155,7 +155,7 @@ struct ContentView: View {
                     Button("Enregistrer") { Task { await model.saveSettings(sshfs: sshfsPath, fskit: useFSKit && !useNFS, nfs: useNFS) } }
                         .disabled(!model.configurationReady || (!useNFS && !sshfsPath.hasPrefix("/")))
                     Button("Préparer le serveur NFS…") { Task { await model.prepareSelectedNFSServer() } }
-                        .disabled(!model.configuration.mount.nfs || model.selectedWorkspace == nil || !model.configurationReady)
+                        .disabled(model.selectedWorkspace == nil || !model.configurationReady)
                     Button("Préparer ce Mac pour NFS") { Task { await model.prepareSelectedNFS() } }
                         .disabled(!model.configuration.mount.nfs || model.selectedWorkspace == nil || !model.configurationReady)
                     Button("Choisir une configuration…") { importConfig() }

@@ -246,7 +246,7 @@ final class AppModel: ObservableObject {
     }
 
     func prepareSelectedNFSServer() async {
-        guard configuration.mount.nfs, let selectedWorkspace else { return }
+        guard let selectedWorkspace else { return }
         // Open a real terminal so sudo reads the password from the remote PTY.
         // AppleScript quotes every argument independently; workspace data is
         // never interpolated into shell source.

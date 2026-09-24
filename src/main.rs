@@ -934,9 +934,6 @@ fn execute_action(
             Ok(0)
         }
         Action::NfsServer { action } => {
-            if !config.mount.nfs {
-                return Err("select the NFS backend before configuring its server".into());
-            }
             let (workspace, server_action, dry_run) = match action {
                 NfsServerAction::Setup { workspace, dry_run } => {
                     (workspace, rws::nfs_server::Action::Setup, dry_run)
