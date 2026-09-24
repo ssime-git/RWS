@@ -85,7 +85,12 @@ it is not equivalent to native remote execution without instructions.
 After a configuration and its mounts work interactively, `rws install` copies
 RWS, the selected SSHFS build, and the configuration into the user's Application
 Support directory. `rws autostart install` then creates one LaunchAgent that
-attempts every configured workspace at login. This keeps restart recovery out of
+checks eligible workspaces at login and every 30 seconds. Explicit Disconnect
+persists a pause, including after reboot, until the next Connect. Existing
+configurations without a saved choice retain automatic mounting by default.
+Healthy verified mounts are left intact; stalled volumes still require explicit
+repair. See the [automatic-remount contract](docs/connection.md#automatic-remount-contract).
+This keeps restart recovery out of
 the source checkout; see the [durable-install procedure](docs/install.md#durable-macos-installation).
 
 ### Diagnose and repair

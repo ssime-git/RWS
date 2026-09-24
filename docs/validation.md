@@ -511,3 +511,41 @@ claimed passing. Full Xcode is not installed, and no system-wide SDK/developer
 directory setting was changed. The 120 runnable Rust tests and 17 release-tool
 tests pass after the repair; the separate process-inspection sandbox limitation
 remains. Delta and live remount acceptance have not been repeated in this step.
+
+## Persistent mount intent — 23 September 2026
+
+Connect/Disconnect now records desired state independently of mount receipts.
+The periodic LaunchAgent skips paused workspaces and re-reads intent under the
+same operation lock used by explicit commands. Tests cover a busy disconnect,
+both retry/disconnect orderings with deterministic barriers, a later retry after
+failure, aliases and dry runs, and preservation of a concurrent pause during
+durable installation. Legacy plists gain a 30-second periodic schedule; absent
+intent entries retain the former default of connecting registered workspaces.
+
+A failing diagnostic regression demonstrated that an on-disk plist previously
+reported success even when its loaded service could not be verified. Doctor now
+uses bounded, read-only launchctl queries to check the loaded executable,
+arguments, schedule and disabled status; unfamiliar output is not a success.
+No service is automatically enabled or restarted by this diagnostic.
+
+The Swift configuration round-trip regression failed on the old decoder and
+passed after adding the typed intent map. A standalone executable compiled from
+the production Domain.swift verified round-trip preservation and rejection of
+invalid values locally, without XCTest or installing full Xcode. XCTest cases
+are included for CI. The 17 Python release-tool tests also passed locally.
+
+These are automated implementation checks, not physical reboot, network-loss,
+Finder, or Delta acceptance. No user mount was disconnected or modified for this
+work. Updating a plist does not update an already loaded job; deployment and
+live acceptance remain separate. Unknown or empty legacy operation-lock files
+still require inspection rather than unsafe automatic removal.
+
+A final repeated-suite run exposed an intermittent advisory-lock release failure.
+A deterministic fork/pipe regression reproduced it: an inherited descriptor kept
+the lock held after the parent's file close. The lock guard now explicitly unlocks
+before closing, after removing its legacy sentinel, including early-error paths.
+The regression verifies immediate reacquisition while the child is still alive.
+After this fix, three consecutive local Rust runs each passed 141 tests, excluding
+the one known sandbox-blocked process-inspection test. Formatting, Clippy with
+warnings denied, and diff whitespace checks passed. Full Swift/XCTest and the
+unfiltered cross-platform Rust suites remain CI checks at this recording point.

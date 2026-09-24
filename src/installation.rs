@@ -117,7 +117,12 @@ pub fn install(
     // This is deliberately the final write: an unsuccessful install leaves
     // the old config and its release untouched, while an old release is never
     // removed by a later successful installation.
-    write_config_atomically(&layout.config_path(), &activated)?;
+    let updating_canonical = source_config
+        .canonicalize()
+        .ok()
+        .zip(layout.config_path().canonicalize().ok())
+        .is_some_and(|(source, target)| source == target);
+    write_config_atomically(&layout.config_path(), &activated, updating_canonical)?;
     Ok(Installation {
         release,
         rws: layout.binary(),
@@ -397,10 +402,39 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("activate private file {}: {e}", path.display()))
 }
 
-fn write_config_atomically(path: &Path, config: &Config) -> Result<(), String> {
-    let bytes = serde_json::to_vec_pretty(config)
-        .map_err(|e| format!("serialize installed config: {e}"))?;
-    write_private_file(path, &bytes)
+fn write_config_atomically(
+    path: &Path,
+    config: &Config,
+    updating_canonical: bool,
+) -> Result<(), String> {
+    Config::update(path, |current| {
+        if updating_canonical {
+            // An app update changes executable locations, not user choices made
+            // while the release was staging (including a concurrent pause).
+            current.mount.sshfs = config.mount.sshfs.clone();
+            current.mount_state_generation = config.mount_state_generation.clone();
+        } else {
+            let mut imported = config.clone();
+            for old in &current.workspaces {
+                if let Ok(new) = imported.find(&old.name) {
+                    if old.host != new.host
+                        || old.remote_root != new.remote_root
+                        || old.mount_root != new.mount_root
+                    {
+                        return Err(format!(
+                            "installed workspace {} has a different identity; refusing to overwrite it",
+                            old.name
+                        ));
+                    }
+                    imported
+                        .mount_intent
+                        .insert(old.name.clone(), current.mount_intent(&old.name));
+                }
+            }
+            *current = imported;
+        }
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -427,8 +461,61 @@ mod tests {
                 mount_root: "/Volumes/RWS-demo".into(),
             }],
             mount: MountOptions::default(),
+            mount_intent: Default::default(),
             mount_state_generation: None,
         }
+    }
+
+    #[test]
+    fn activation_preserves_pause_and_settings_written_after_staging_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        fs::write(&path, serde_json::to_vec(&config()).unwrap()).unwrap();
+        let mut staged = Config::load_existing(&path).unwrap();
+        staged.mount.sshfs = Some("/new/sshfs".into());
+        staged.mount_state_generation = Some("new".into());
+        Config::set_mount_intent(&path, "demo", crate::config::MountIntent::Paused).unwrap();
+        Config::set_mount_options(
+            &path,
+            MountOptions {
+                sshfs: None,
+                fskit: true,
+            },
+        )
+        .unwrap();
+        write_config_atomically(&path, &staged, true).unwrap();
+        let active = Config::load_existing(&path).unwrap();
+        assert_eq!(
+            active.mount_intent("demo"),
+            crate::config::MountIntent::Paused
+        );
+        assert!(active.mount.fskit);
+        assert_eq!(active.mount_state_generation.as_deref(), Some("new"));
+        assert_eq!(active.mount.sshfs.as_deref(), Some("/new/sshfs"));
+    }
+
+    #[test]
+    fn imported_activation_preserves_matching_pause_and_refuses_conflicting_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let mut existing = config();
+        existing
+            .mount_intent
+            .insert("demo".into(), crate::config::MountIntent::Paused);
+        fs::write(&path, serde_json::to_vec(&existing).unwrap()).unwrap();
+        write_config_atomically(&path, &config(), false).unwrap();
+        assert_eq!(
+            Config::load(&path).unwrap().mount_intent("demo"),
+            crate::config::MountIntent::Paused
+        );
+        let before = fs::read(&path).unwrap();
+        let mut conflicting = config();
+        conflicting.workspaces[0].host = "other-host".into();
+        assert!(write_config_atomically(&path, &conflicting, false).is_err());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        fs::write(path.with_extension("lock"), "held").unwrap();
+        assert!(write_config_atomically(&path, &config(), true).is_err());
+        assert_eq!(fs::read(path).unwrap(), before);
     }
 
     #[test]

@@ -19,7 +19,11 @@ user state before enabling login remounting:
 RWS keeps its canonical configuration in `~/Library/Application Support/RWS/`,
 uses a managed executable and versioned SSHFS release there, and preserves the
 source configuration. The single `io.rws.mounts` LaunchAgent reads that canonical
-configuration at login and retries failed mounts after 30 seconds. macFUSE's
+configuration at login and every 30 seconds, including after successful passes.
+Only workspaces whose saved intent is `connected` are eligible; missing intent
+entries preserve the old default of connecting. `disconnect` saves a persistent
+pause, cleared by `connect`. See the [state contract](connection.md#automatic-remount-contract).
+macFUSE's
 privileged helper still must be approved once from a real GUI terminal; a
 LaunchAgent cannot show that prompt.
 
@@ -33,8 +37,12 @@ environment):
 launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/io.rws.mounts.plist"
 ```
 
-It retries failed mounts every 30 seconds, for example while Tailscale is still
-connecting. Check its registration and the volumes with:
+It checks eligible mounts periodically, for example while Tailscale is still
+connecting. The old one-shot agent stopped checking after its first successful
+pass; an already loaded old job does not gain periodic checks merely because its
+plist was updated. At the next login, launchd loads the updated plist. Do not
+repeatedly bootstrap an already registered job or treat its registration as
+proof of healthy mounts. Check its registration and the volumes with:
 
 ```sh
 launchctl print "gui/$(id -u)/io.rws.mounts"
@@ -57,7 +65,7 @@ refresh already-enabled managed references; repeated installation of the same
 binary/configuration does not create another release. The updated app performs
 this durable update at relaunch for the canonical configuration. It refreshes
 the existing LaunchAgent on disk without enabling absent/custom/disabled agents
-or restarting a currently loaded job. Logging changes apply at the next login.
+or restarting a currently loaded job. Logging and scheduling changes apply at the next login.
 Autostart output is saved in `~/Library/Application Support/RWS/logs/` as
 `autostart.log` and `autostart.err.log` (private files).
 

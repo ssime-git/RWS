@@ -353,21 +353,127 @@ fn create_receipt_directory(
     }
     Ok(())
 }
-pub struct OperationLock(PathBuf);
+pub struct OperationLock {
+    // Never unlink this file: other callers may already have its inode open.
+    _advisory: AdvisoryLock,
+    legacy: PathBuf,
+}
+struct AdvisoryLock(fs::File);
+impl Drop for AdvisoryLock {
+    fn drop(&mut self) {
+        use std::os::unix::io::AsRawFd;
+        // A forked child may hold the same open-file description until exec.
+        // Closing our fd alone would leave its flock active in that child.
+        // SAFETY: this is a live descriptor for the file locked below.
+        unsafe {
+            libc::flock(self.0.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
 impl Drop for OperationLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
+        let _ = fs::remove_file(&self.legacy);
     }
 }
 pub fn lock(config_path: &Path, config: &Config, w: &Workspace) -> Result<OperationLock, String> {
-    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+    use std::{
+        io::Write,
+        os::unix::{
+            fs::{DirBuilderExt, OpenOptionsExt},
+            io::AsRawFd,
+        },
+    };
+    let resolved = match config_path.canonicalize() {
+        Ok(resolved) => resolved,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => config_path.to_path_buf(),
+        Err(error) => return Err(format!("resolve configuration: {error}")),
+    };
+    let config_path = resolved.as_path();
+    let parent = config_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let directory = parent.join(format!(
+        "{}.mount-operations",
+        config_namespace(config_path)
+    ));
+    match fs::DirBuilder::new().mode(0o700).create(&directory) {
+        Ok(()) => (),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(e) => return Err(format!("operation lock directory: {e}")),
+    }
+    validate_generated_state_directory(&directory)?;
+    let advisory_path = directory.join(format!("{}.lock", w.name));
+    let advisory = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&advisory_path)
+        .map_err(|e| format!("operation lock {}: {e}", advisory_path.display()))?;
+    if !advisory.metadata().map_err(|e| e.to_string())?.is_file() {
+        return Err("operation lock must be a regular file".into());
+    }
+    // SAFETY: flock operates on a live file descriptor and has no pointer arguments.
+    if unsafe { libc::flock(advisory.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return Err(format!(
+            "operation lock {}: another operation is active; retry after it finishes",
+            advisory_path.display()
+        ));
+    }
+    // Own the unlock immediately, including errors before the legacy sentinel
+    // is created. OperationLock removes that sentinel before this guard drops.
+    let advisory = AdvisoryLock(advisory);
+    // Keep the old generation-specific sentinel while operating, so an older
+    // RWS binary cannot overlap this operation during an upgrade.
+    let fresh = if config_path.exists() {
+        Some(Config::load_existing(config_path)?)
+    } else {
+        None
+    };
+    let config = fresh.as_ref().unwrap_or(config);
     let path = receipt_path(config_path, config, w).with_extension("lock");
     create_receipt_directory(config_path, config, &path)?;
+    recover_dead_legacy_lock(&path)?;
     let mut file = fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(&path)
         .map_err(|e| format!("operation lock {}: {e}; another operation may be active; inspect stale locks after a crash", path.display()))?;
-    let guard = OperationLock(path);
+    let guard = OperationLock {
+        _advisory: advisory,
+        legacy: path,
+    };
     writeln!(file, "{}", std::process::id()).map_err(|e| e.to_string())?;
     Ok(guard)
+}
+
+fn recover_dead_legacy_lock(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if !metadata.is_file() {
+        return Ok(());
+    }
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let Ok(pid) = contents.trim().parse::<libc::pid_t>() else {
+        return Ok(());
+    };
+    if pid <= 0 {
+        return Ok(());
+    }
+    // SAFETY: signal zero only checks existence; no signal is delivered.
+    let absent = unsafe { libc::kill(pid, 0) } == -1
+        && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+    if absent
+        && fs::symlink_metadata(path)
+            .is_ok_and(|current| current.dev() == metadata.dev() && current.ino() == metadata.ino())
+        && fs::read_to_string(path).is_ok_and(|current| current == contents)
+    {
+        fs::remove_file(path).map_err(|e| format!("recover stale operation lock: {e}"))?;
+    }
+    Ok(())
 }
 pub fn record(
     config_path: &Path,
@@ -636,6 +742,7 @@ mod tests {
             version: 1,
             workspaces: vec![],
             mount: MountOptions::default(),
+            mount_intent: Default::default(),
             mount_state_generation: None,
         };
         let mut w = Workspace {
@@ -676,6 +783,7 @@ mod tests {
             version: 1,
             workspaces: vec![],
             mount: MountOptions::default(),
+            mount_intent: Default::default(),
             mount_state_generation: Some("release-20260922".into()),
         };
         let workspace = Workspace {
@@ -717,6 +825,94 @@ mod tests {
     }
 
     #[test]
+    fn operation_lock_survives_generation_changes_and_releases_on_drop() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let mut config = Config::load(&path).unwrap();
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/demo".into(),
+            mount_root: "/Volumes/demo".into(),
+        };
+        let first = lock(&path, &config, &workspace).unwrap();
+        config.mount_state_generation = Some("new".into());
+        assert!(lock(&path, &config, &workspace).is_err());
+        drop(first);
+        lock(&path, &config, &workspace)
+            .unwrap_or_else(|error| panic!("reacquire after drop: {error}"));
+    }
+
+    #[test]
+    fn operation_lock_releases_even_when_a_child_inherits_the_descriptor() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let config = Config::load(&path).unwrap();
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/demo".into(),
+            mount_root: "/Volumes/demo".into(),
+        };
+        let first = lock(&path, &config, &workspace).unwrap();
+        let mut pipe = [-1; 2];
+        // SAFETY: pipe writes two descriptors to the supplied two-element array.
+        assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+        // SAFETY: the child calls only async-signal-safe libc functions then
+        // _exit, without touching Rust allocation, unwinding, or other threads.
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0);
+        if child == 0 {
+            unsafe {
+                libc::close(pipe[1]);
+                let mut byte = 0_u8;
+                libc::read(pipe[0], (&mut byte as *mut u8).cast(), 1);
+                libc::_exit(0);
+            }
+        }
+        // The child cannot exit until the parent sends a byte. It therefore
+        // keeps the inherited advisory fd open throughout the reacquire below.
+        unsafe {
+            libc::close(pipe[0]);
+        }
+        drop(first);
+        let reacquired = lock(&path, &config, &workspace);
+        // Always release and reap the child before asserting the result.
+        unsafe {
+            libc::write(pipe[1], b"x".as_ptr().cast(), 1);
+            libc::close(pipe[1]);
+            libc::waitpid(child, std::ptr::null_mut(), 0);
+        }
+        reacquired
+            .unwrap_or_else(|error| panic!("child retained an inherited operation lock: {error}"));
+    }
+
+    #[test]
+    fn operation_lock_recovers_dead_legacy_owner_but_refuses_unknown_or_live_owner() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let config = Config::load(&path).unwrap();
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/demo".into(),
+            mount_root: "/Volumes/demo".into(),
+        };
+        let legacy = receipt_path(&path, &config, &workspace).with_extension("lock");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        for owner in ["unknown".to_string(), std::process::id().to_string()] {
+            fs::write(&legacy, &owner).unwrap();
+            assert!(lock(&path, &config, &workspace).is_err());
+            assert_eq!(fs::read_to_string(&legacy).unwrap(), owner);
+        }
+        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let dead = child.id();
+        child.wait().unwrap();
+        fs::write(&legacy, dead.to_string()).unwrap();
+        assert!(lock(&path, &config, &workspace).is_ok());
+    }
+
+    #[test]
     fn receipt_without_a_generation_uses_the_legacy_adjacent_directory() {
         let temp = tempfile::tempdir().unwrap();
         let config_path = temp.path().join("config.json");
@@ -724,6 +920,7 @@ mod tests {
             version: 1,
             workspaces: vec![],
             mount: MountOptions::default(),
+            mount_intent: Default::default(),
             mount_state_generation: None,
         };
         let workspace = Workspace {
@@ -750,6 +947,7 @@ mod tests {
             version: 1,
             workspaces: vec![],
             mount: MountOptions::default(),
+            mount_intent: Default::default(),
             mount_state_generation: Some("release-20260922".into()),
         };
         let workspace = Workspace {
@@ -786,6 +984,7 @@ mod tests {
             version: 1,
             workspaces: vec![],
             mount: MountOptions::default(),
+            mount_intent: Default::default(),
             mount_state_generation: Some("release-20260922".into()),
         };
         let workspace = Workspace {
@@ -827,6 +1026,7 @@ mod tests {
             version: 1,
             workspaces: vec![],
             mount: MountOptions::default(),
+            mount_intent: Default::default(),
             mount_state_generation: Some("release-20260922".into()),
         };
         let workspace = Workspace {
@@ -869,6 +1069,7 @@ mod tests {
             version: 1,
             workspaces: vec![],
             mount: MountOptions::default(),
+            mount_intent: Default::default(),
             mount_state_generation: Some("release-20260922".into()),
         };
         let workspace = Workspace {
@@ -901,6 +1102,7 @@ mod tests {
             version: 1,
             workspaces: vec![],
             mount: MountOptions::default(),
+            mount_intent: Default::default(),
             mount_state_generation: Some("release-20260922".into()),
         };
         let workspace = Workspace {

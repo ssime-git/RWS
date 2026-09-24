@@ -2,6 +2,21 @@ import XCTest
 @testable import RWSApp
 
 final class ConfigurationTests: XCTestCase {
+    func testPreservesMountIntentWhenRoundTrippingConfiguration() throws {
+        let data = #"{"version":1,"workspaces":[{"name":"demo","host":"vm","remote_root":"/srv","mount_root":"/Volumes/demo"}],"mount_intent":{"demo":"paused"}}"#.data(using: .utf8)!
+        let config = try AppConfiguration.decode(data)
+        let encoded = try JSONEncoder().encode(config)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(object["mount_intent"] as? [String: String], ["demo": "paused"])
+    }
+
+    func testRejectsInvalidMountIntent() {
+        for intent in [#"{"demo":"unknown"}"#, #"{"demo":false}"#, #"[]"#, "null"] {
+            let json = #"{"version":1,"workspaces":[],"mount_intent":\#(intent)}"#
+            XCTAssertThrowsError(try AppConfiguration.decode(Data(json.utf8)))
+        }
+    }
+
     func testAcceptsDurableInstallationGeneration() throws {
         let data = #"{"version":1,"workspaces":[],"mount_state_generation":"release-123"}"#.data(using: .utf8)!
         let config = try AppConfiguration.decode(data)
