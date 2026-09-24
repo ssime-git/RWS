@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var remotePath = ""
     @State private var sshfsPath = ""
     @State private var useFSKit = true
+    @State private var useNFS = false
     @State private var showDeltaConfirmation = false
     @State private var showSetup = false
     @State private var showDetails = false
@@ -61,10 +62,12 @@ struct ContentView: View {
             showSetup = false
             sshfsPath = model.configuration.mount.sshfs ?? model.detectedSSHFS ?? ""
             useFSKit = model.configuration.mount.fskit
+            useNFS = model.configuration.mount.nfs
         }
         .onChange(of: model.configuration.mount.sshfs) { sshfsPath = $0 ?? "" }
         .onChange(of: model.detectedSSHFS) { if model.configuration.mount.sshfs == nil { sshfsPath = $0 ?? "" } }
         .onChange(of: model.configuration.mount.fskit) { useFSKit = $0 }
+        .onChange(of: model.configuration.mount.nfs) { useNFS = $0 }
         .alert("RWS", isPresented: Binding(get: { model.alertMessage != nil }, set: { if !$0 { model.alertMessage = nil } })) {
             Button("OK") { model.alertMessage = nil }
         } message: { Text(model.alertMessage ?? "") }
@@ -140,16 +143,19 @@ struct ContentView: View {
     private var setup: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                Text("RWS nécessite actuellement macFUSE et la version SSHFS corrigée externe. La détection est automatique ; choisissez un autre exécutable uniquement si nécessaire.")
+                Text(useNFS ? "NFS natif utilise le client intégré à macOS. Le serveur Linux et le point de montage doivent être préparés avant la première connexion." : "SSHFS utilise macFUSE et la version corrigée. La détection est automatique ; choisissez un autre exécutable uniquement si nécessaire.")
                     .foregroundStyle(.secondary)
                 HStack {
-                    TextField("/absolute/path/to/sshfs", text: $sshfsPath)
-                    Button("Choisir…") { chooseSSHFS() }
+                    TextField("/absolute/path/to/sshfs", text: $sshfsPath).disabled(useNFS)
+                    Button("Choisir…") { chooseSSHFS() }.disabled(useNFS)
                 }
-                Toggle("Utiliser le moteur macFUSE FSKit", isOn: $useFSKit)
+                Toggle("Utiliser NFS natif (expérimental)", isOn: $useNFS)
+                Toggle("Utiliser le moteur macFUSE FSKit", isOn: $useFSKit).disabled(useNFS)
                 HStack {
-                    Button("Enregistrer") { Task { await model.saveSettings(sshfs: sshfsPath, fskit: useFSKit) } }
-                        .disabled(!model.configurationReady || !sshfsPath.hasPrefix("/"))
+                    Button("Enregistrer") { Task { await model.saveSettings(sshfs: sshfsPath, fskit: useFSKit && !useNFS, nfs: useNFS) } }
+                        .disabled(!model.configurationReady || (!useNFS && !sshfsPath.hasPrefix("/")))
+                    Button("Préparer ce Mac pour NFS") { Task { await model.prepareSelectedNFS() } }
+                        .disabled(!model.configuration.mount.nfs || model.selectedWorkspace == nil || !model.configurationReady)
                     Button("Choisir une configuration…") { importConfig() }
                     Button("Installer les règles Delta…") { showDeltaConfirmation = true }.disabled(!model.configurationReady)
                     Link("Aide à l’installation", destination: URL(string: "https://github.com/ssime-git/RWS/blob/prototype/cli/docs/prototype.md")!)

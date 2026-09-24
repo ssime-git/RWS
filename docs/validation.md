@@ -549,3 +549,13 @@ After this fix, three consecutive local Rust runs each passed 141 tests, excludi
 the one known sandbox-blocked process-inspection test. Formatting, Clippy with
 warnings denied, and diff whitespace checks passed. Full Swift/XCTest and the
 unfiltered cross-platform Rust suites remain CI checks at this recording point.
+
+## Experimental native NFS branch — 24 September 2026
+
+Branch `dev/native-mount-feasibility` adds an opt-in native NFS path to the CLI and macOS app. It has not been installed over the user's RWS app or selected in the production configuration. The two production remote hosts were inspected in read-only mode; neither NFS server was configured. Razer remained mounted with the existing FSKit backend throughout the experiments. The original-path, two-host, reboot and network-loss acceptance criteria have **not** passed.
+
+A disposable userspace NFSv3 export in OrbStack passed bidirectional read/write, symlink, chmod, atomic rename, case-distinct names, and Unicode NFD lookup when macOS used the `nfc` mount option. A UID/GID 1000:1000 squash export allowed Mac UID 501 to create files and chmod them while Linux saw ownership 1000:1000. The test server lacked NFS network locking (`flock` returned errno 45), so it cannot validate production coding workloads. macOS AppleDouble sidecars appeared for metadata. The earlier disposable Ganesha NFSv4 server refused file operations; no conclusion about Linux kernel NFSv4 follows from that failure.
+
+Rust `cargo test --locked` and `cargo clippy --locked --all-targets -- -D warnings` passed for the branch. `swift build` passed with the installed macOS 26.5 SDK. `swift test` remains blocked before test execution because the installed Command Line Tools lack XCTest; an executable compiled from production `Domain.swift` passed NFS config decode/encode and command-generation assertions. One-time privileged mountpoint creation, real kernel NFS locks, both real hosts, exact original paths, app launch, Finder behavior, and reboot recovery remain unverified.
+
+A later disposable Arch OrbStack machine with the Linux kernel NFS server did not pass the native NFS acceptance gate. macOS mounted its NFSv4.1 pseudoroot, but file creation blocked and ended with `ENOENT` after forced unmount, on both btrfs and tmpfs exports. NFSv4.0 failed mount negotiation with `Input/output error`. This experiment does not distinguish a real-host NFS defect from an OrbStack NFSD/container limitation. The machine and mounts were removed; production RWS mounts and configuration were unchanged. The experimental CLI now selects NFSv4.1, but production deployment remains blocked on a representative server trial, locks, exact paths, two-host concurrency and reboot recovery.

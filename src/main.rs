@@ -51,6 +51,18 @@ enum Action {
         #[arg(long, value_enum)]
         backend: Option<Backend>,
     },
+    /// Prepare an exact /Volumes directory for native NFS using one sudo prompt.
+    NfsPrepare {
+        workspace: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    #[command(hide = true)]
+    NfsPrepareHelper {
+        workspace: String,
+        owner_uid: u32,
+        owner_gid: u32,
+    },
     /// Show mount identity separately from SSH reachability and execution.
     Status {
         workspace: Option<String>,
@@ -169,6 +181,7 @@ enum Action {
 enum Backend {
     Default,
     Fskit,
+    Nfs,
 }
 #[derive(Subcommand)]
 enum HookAction {
@@ -262,12 +275,12 @@ fn run_autostart() -> Result<i32, String> {
     if let Err(error) = maintenance::refresh_integrations(&path) {
         failures.push(format!("integration refresh: {error}"));
     }
-    for workspace in &config.workspaces {
-        match run_with_origin(
+    let connect = |workspace: String, path: PathBuf| {
+        run_with_origin(
             Cli {
-                config: Some(path.clone()),
+                config: Some(path),
                 command: Action::Mount {
-                    workspace: workspace.name.clone(),
+                    workspace,
                     if_desired: true,
                     verify_existing: false,
                     repair: false,
@@ -277,10 +290,43 @@ fn run_autostart() -> Result<i32, String> {
                 },
             },
             OperationOrigin::Automatic,
-        ) {
-            Ok(0) => {}
-            Ok(code) => failures.push(format!("{} (exit {code})", workspace.name)),
-            Err(error) => failures.push(format!("{}: {error}", workspace.name)),
+        )
+    };
+    if config.mount.nfs {
+        // Native NFS mounts are independent kernel clients. A slow SSH/NFS
+        // handshake on one host must not postpone another workspace's retry.
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = config
+                .workspaces
+                .iter()
+                .map(|workspace| {
+                    let name = workspace.name.clone();
+                    let path = path.clone();
+                    let worker = scope.spawn({
+                        let name = name.clone();
+                        move || connect(name, path)
+                    });
+                    (name, worker)
+                })
+                .collect();
+            for (name, handle) in handles {
+                match handle.join() {
+                    Ok(Ok(0)) => (),
+                    Ok(Ok(code)) => failures.push(format!("{name} (exit {code})")),
+                    Ok(Err(error)) => failures.push(format!("{name}: {error}")),
+                    Err(_) => failures.push(format!("{name}: mount worker panicked")),
+                }
+            }
+        });
+    } else {
+        // Keep the existing serialized SSHFS/FSKit behavior unchanged.
+        for workspace in &config.workspaces {
+            let name = workspace.name.clone();
+            match connect(name.clone(), path.clone()) {
+                Ok(0) => (),
+                Ok(code) => failures.push(format!("{name} (exit {code})")),
+                Err(error) => failures.push(format!("{name}: {error}")),
+            }
         }
     }
     if failures.is_empty() {
@@ -620,6 +666,212 @@ fn with_mount_intent(
     execute(config)
 }
 
+fn prepare_native_nfs_mountpoint(
+    path: &std::path::Path,
+    w: &Workspace,
+    dry_run: bool,
+) -> Result<i32, String> {
+    use std::io::IsTerminal;
+    use std::os::unix::fs::MetadataExt;
+    if !cfg!(target_os = "macos") || w.mount_root.parent() != Some(std::path::Path::new("/Volumes"))
+    {
+        return Err("native NFS preparation requires a direct child of /Volumes on macOS".into());
+    }
+    if rws::lifecycle::identity(&w.mount_root)?.is_some() {
+        return Err("a filesystem is already mounted at this path; leaving it untouched".into());
+    }
+    match std::fs::symlink_metadata(&w.mount_root) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+            if std::fs::read_dir(&w.mount_root)
+                .map_err(|e| e.to_string())?
+                .next()
+                .is_some()
+            {
+                return Err(
+                    "existing NFS mount directory is not empty; leaving it untouched".into(),
+                );
+            }
+            if metadata.uid() == unsafe { libc::geteuid() } {
+                println!("NFS mount point is ready: {}", w.mount_root.display());
+                return Ok(0);
+            }
+            // A former FSKit mount can leave an empty root-owned directory at
+            // the canonical path. The privileged helper checks it again and
+            // changes ownership only if it is still an unmounted empty dir.
+        }
+        Ok(_) => return Err("existing NFS mount point is not a real directory".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+        Err(error) => return Err(format!("inspect NFS mount point: {error}")),
+    }
+    let uid = unsafe { libc::geteuid() }.to_string();
+    let gid = unsafe { libc::getegid() }.to_string();
+    let binary = std::env::current_exe().map_err(|e| e.to_string())?;
+    let binary = binary.to_str().ok_or("RWS executable path is not UTF-8")?;
+    let config_path = path.to_str().ok_or("RWS configuration path is not UTF-8")?;
+    let helper_args = [
+        binary.to_string(),
+        "--config".into(),
+        config_path.to_string(),
+        "nfs-prepare-helper".into(),
+        w.name.clone(),
+        uid,
+        gid,
+    ];
+    if dry_run {
+        return invoke("/usr/bin/sudo", &helper_args, true, false);
+    }
+    let status = if std::io::stdin().is_terminal() {
+        Command::new("/usr/bin/sudo")
+            .args(&helper_args)
+            .status()
+            .map_err(|e| format!("start administrator helper: {e}"))?
+    } else {
+        // The app can request a standard macOS administrator dialog. All
+        // dynamic values are passed as AppleScript argv and shell-quoted there.
+        let script = r#"on run argv
+set commandText to quoted form of (item 1 of argv) & " --config " & quoted form of (item 2 of argv) & " nfs-prepare-helper " & quoted form of (item 3 of argv) & " " & quoted form of (item 4 of argv) & " " & quoted form of (item 5 of argv)
+do shell script commandText with administrator privileges
+end run"#;
+        Command::new("/usr/bin/osascript")
+            .arg("-e")
+            .arg(script)
+            .args([
+                binary,
+                config_path,
+                &w.name,
+                &helper_args[5],
+                &helper_args[6],
+            ])
+            .status()
+            .map_err(|e| format!("request macOS administrator authorization: {e}"))?
+    };
+    if !status.success() {
+        return Err(format!(
+            "NFS mount point preparation failed with status {status}"
+        ));
+    }
+    let metadata = std::fs::symlink_metadata(&w.mount_root).map_err(|e| e.to_string())?;
+    if !metadata.is_dir() || metadata.uid() != unsafe { libc::geteuid() } {
+        return Err("NFS mount point was not created with the expected owner".into());
+    }
+    println!("NFS mount point prepared: {}", w.mount_root.display());
+    Ok(0)
+}
+
+fn mount_native_nfs(
+    path: &std::path::Path,
+    config: &Config,
+    w: &Workspace,
+    verify_existing: bool,
+    repair: bool,
+    dry_run: bool,
+) -> Result<i32, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("native NFS mounting is supported on macOS only".into());
+    }
+    let args = rws::native_nfs::mount_args(w)?;
+    if dry_run {
+        return invoke("/sbin/mount_nfs", &args, true, false);
+    }
+    if let Some(actual) = rws::lifecycle::identity(&w.mount_root)? {
+        if !rws::native_nfs::matches_source(w, &actual) {
+            return Err(
+                "another filesystem is mounted at the NFS path; leaving it untouched".into(),
+            );
+        }
+        if rws::lifecycle::verified(path, config, w, &actual) {
+            match rws::lifecycle::probe_health(&w.mount_root, std::time::Duration::from_secs(4)) {
+                Ok(()) if repair => return Err("mount answers normally; nothing to repair".into()),
+                Ok(()) => {
+                    println!(
+                        "Already connected: {} at {}",
+                        w.name,
+                        w.mount_root.display()
+                    );
+                    return Ok(0);
+                }
+                Err(reason) if !repair => {
+                    return Err(format!(
+                        "NFS mount is unresponsive ({reason}); retry when the server returns or use connect {} --repair after closing open files",
+                        w.name
+                    ));
+                }
+                Err(reason) => {
+                    eprintln!(
+                        "Unresponsive NFS mount ({reason}); ejecting {}",
+                        w.mount_root.display()
+                    );
+                    let code = invoke(
+                        "/usr/sbin/diskutil",
+                        &[
+                            "unmount".into(),
+                            "force".into(),
+                            w.mount_root.to_string_lossy().into_owned(),
+                        ],
+                        false,
+                        false,
+                    )?;
+                    if code != 0 || rws::lifecycle::identity(&w.mount_root)?.is_some() {
+                        return Err("NFS ejection failed; remount stopped".into());
+                    }
+                    rws::lifecycle::forget(path, config, w)?;
+                }
+            }
+        } else if verify_existing {
+            rws::lifecycle::attest(w, &actual)?;
+            rws::lifecycle::record(path, config, w, actual)?;
+            println!("Existing NFS volume verified and connected: {}", w.name);
+            return Ok(0);
+        } else {
+            return Err("NFS volume is mounted but has no verified RWS receipt; use connect NAME --verify-existing".into());
+        }
+    }
+    rws::lifecycle::mountpoint_answers(&w.mount_root, std::time::Duration::from_secs(4))?;
+    let metadata = std::fs::symlink_metadata(&w.mount_root).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "NFS mount point {} is absent; run rws nfs-prepare {} once",
+                w.mount_root.display(),
+                w.name
+            )
+        } else {
+            format!("inspect NFS mount point: {error}")
+        }
+    })?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("NFS mount point must be a real directory".into());
+    }
+    if std::fs::read_dir(&w.mount_root)
+        .map_err(|error| format!("inspect NFS mount point contents: {error}"))?
+        .next()
+        .is_some()
+    {
+        return Err("NFS mount point is not empty; refusing to hide existing files".into());
+    }
+    let status = rws::process::run(
+        Command::new("/sbin/mount_nfs").args(&args),
+        std::time::Duration::from_secs(30),
+    )
+    .map_err(|error| format!("native NFS mount: {error}"))?;
+    if !status.success() {
+        return Err(format!("native NFS mount failed with status {status}"));
+    }
+    let actual = rws::lifecycle::identity(&w.mount_root)?
+        .ok_or("NFS mount returned success but no volume is present")?;
+    if !rws::native_nfs::matches_source(w, &actual) {
+        return Err("NFS mount source did not match workspace; no ownership receipt saved".into());
+    }
+    rws::lifecycle::attest(w, &actual)
+        .map_err(|error| format!("NFS volume mounted but cross-host verification failed: {error}; no ownership receipt saved"))?;
+    rws::lifecycle::record(path, config, w, actual)?;
+    println!(
+        "Mounted {} at {} with native NFS",
+        w.name,
+        w.mount_root.display()
+    );
+    Ok(0)
+}
+
 fn execute_action(
     command: Action,
     path: &std::path::Path,
@@ -645,6 +897,29 @@ fn execute_action(
                     installed.rws.display()
                 );
             }
+            Ok(0)
+        }
+        Action::NfsPrepare { workspace, dry_run } => {
+            let w = config.find(&workspace)?;
+            if !config.mount.nfs {
+                return Err("select the NFS backend before preparing its mount point".into());
+            }
+            prepare_native_nfs_mountpoint(path, w, dry_run)
+        }
+        Action::NfsPrepareHelper {
+            workspace,
+            owner_uid,
+            owner_gid,
+        } => {
+            let w = config.find(&workspace)?;
+            if !config.mount.nfs {
+                return Err("NFS backend is not selected".into());
+            }
+            #[cfg(target_os = "macos")]
+            rws::native_nfs::prepare_mountpoint_as_root(w, owner_uid, owner_gid)?;
+            #[cfg(not(target_os = "macos"))]
+            return Err("NFS mount-point preparation requires macOS".into());
+            println!("NFS mount point prepared: {}", w.mount_root.display());
             Ok(0)
         }
         Action::DeltaRules {
@@ -696,12 +971,24 @@ fn execute_action(
             Ok(0)
         }
         Action::Settings { sshfs, backend } => {
+            let prior_backend = (config.mount.fskit, config.mount.nfs);
             let mut options = config.mount;
             if let Some(sshfs) = sshfs {
                 options.sshfs = Some(sshfs);
             }
             if let Some(backend) = backend {
                 options.fskit = matches!(backend, Backend::Fskit);
+                options.nfs = matches!(backend, Backend::Nfs);
+            }
+            if cfg!(target_os = "macos") && (options.fskit, options.nfs) != prior_backend {
+                for workspace in &config.workspaces {
+                    if rws::lifecycle::identity(&workspace.mount_root)?.is_some() {
+                        return Err(format!(
+                            "{} is mounted; disconnect it before changing the filesystem backend",
+                            workspace.name
+                        ));
+                    }
+                }
             }
             Config::set_mount_options(path, options)?;
             println!("Mount settings saved in {}", path.display());
@@ -948,6 +1235,14 @@ fn execute_action(
             raw_names,
         } => {
             let w = config.find(&workspace)?;
+            if config.mount.nfs {
+                if fskit || raw_names {
+                    return Err(
+                        "--fskit and --raw-names apply only to SSHFS, not native NFS".into(),
+                    );
+                }
+                return mount_native_nfs(path, &config, w, verify_existing, repair, dry_run);
+            }
             let fskit = fskit || config.mount.fskit;
             if !cfg!(target_os = "macos") {
                 return Err("mount is currently supported on macOS only".into());
@@ -1207,6 +1502,7 @@ mod maintenance_status_tests {
             rws::config::MountOptions {
                 sshfs: Some("/nonexistent/rws-test-sshfs".into()),
                 fskit: false,
+                nfs: false,
             },
         )
         .unwrap();

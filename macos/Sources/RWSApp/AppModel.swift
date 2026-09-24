@@ -141,6 +141,11 @@ final class AppModel: ObservableObject {
         prerequisitesReady = false
         detectedSSHFS = nil
         let fm = FileManager.default
+        if configuration.mount.nfs {
+            prerequisitesReady = fm.isExecutableFile(atPath: "/sbin/mount_nfs")
+            prerequisiteProblem = prerequisitesReady ? nil : "Le client NFS intégré à macOS est indisponible."
+            return
+        }
         let fusePresent = fm.fileExists(atPath: "/Library/Filesystems/macfuse.fs/Contents/Info.plist")
             && fm.fileExists(atPath: "/usr/local/lib/libfuse3.4.dylib")
         guard fusePresent else {
@@ -177,7 +182,9 @@ final class AppModel: ObservableObject {
         selectedWorkspace = name
         await refreshIntegrations()
         guard prerequisitesReady else {
-            alertMessage = "Espace enregistré. Configurez macFUSE et SSHFS pour le monter et l’ajouter au Finder."
+            alertMessage = configuration.mount.nfs
+                ? "Espace enregistré. Préparez le point de montage NFS puis connectez-le."
+                : "Espace enregistré. Configurez macFUSE et SSHFS pour le monter et l’ajouter au Finder."
             await refreshStatus()
             return
         }
@@ -232,10 +239,16 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func saveSettings(sshfs: String, fskit: Bool) async {
-        await perform(.settings(config: configurationURL, sshfs: sshfs, fskit: fskit))
+    func saveSettings(sshfs: String, fskit: Bool, nfs: Bool = false) async {
+        await perform(.settings(config: configurationURL, sshfs: sshfs, fskit: fskit, nfs: nfs))
         load()
         await recheckStartup()
+    }
+
+    func prepareSelectedNFS() async {
+        guard configuration.mount.nfs, let selectedWorkspace else { return }
+        await perform(.nfsPrepare(config: configurationURL, workspace: selectedWorkspace), operationTimeout: .seconds(180))
+        await refreshStatus()
     }
 
     func openSelected() async {
