@@ -967,16 +967,21 @@ fn execute_action(
             owner_uid,
             owner_gid,
         } => {
-            let w = config.find(&workspace)?;
-            if !config.mount.nfs {
-                return Err("NFS backend is not selected".into());
-            }
             #[cfg(target_os = "macos")]
-            rws::native_nfs::prepare_mountpoint_as_root(w, owner_uid, owner_gid)?;
+            {
+                let w = config.find(&workspace)?;
+                if !config.mount.nfs {
+                    return Err("NFS backend is not selected".into());
+                }
+                rws::native_nfs::prepare_mountpoint_as_root(w, owner_uid, owner_gid)?;
+                println!("NFS mount point prepared: {}", w.mount_root.display());
+                Ok(0)
+            }
             #[cfg(not(target_os = "macos"))]
-            return Err("NFS mount-point preparation requires macOS".into());
-            println!("NFS mount point prepared: {}", w.mount_root.display());
-            Ok(0)
+            {
+                let _ = (workspace, owner_uid, owner_gid);
+                Err("NFS mount-point preparation requires macOS".into())
+            }
         }
         Action::DeltaRules {
             output,
