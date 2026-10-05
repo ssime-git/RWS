@@ -44,11 +44,14 @@ const CACHE_TTL: Duration = Duration::from_secs(1);
 /// replacement becomes visible once the idle handle is closed.
 const HANDLE_TTL: Duration = Duration::from_secs(2);
 const MAX_HANDLES: usize = 64;
+/// Cache sizes beyond which expired entries are pruned.
+const MAX_CACHED_ATTRS: usize = 4096;
+const MAX_CACHED_LISTINGS: usize = 256;
 
 /// Mount options for macOS `mount_nfs` against this server on `port`.
 pub fn mount_options(port: u16) -> String {
     format!(
-        "nolocks,vers=3,tcp,soft,intr,timeo=200,retrans=1,actimeo=1,readahead=16,\
+        "nolocks,vers=3,tcp,soft,intr,timeo=100,retrans=10,actimeo=1,readahead=16,\
          rsize={TRANSFER},wsize={TRANSFER},port={port},mountport={port}"
     )
 }
@@ -441,17 +444,20 @@ impl SftpFs {
         {
             return Ok(a.clone());
         }
-        let path = self.abs(rel);
-        let a = self
-            .link
-            .call(|s| async move { s.lstat(path).await })
-            .await
-            .map_err(nfs_error)?
-            .attrs;
-        self.attrs
-            .lock()
-            .unwrap()
-            .insert(id, (Instant::now(), a.clone()));
+        let mut attempt = 0;
+        let a = loop {
+            let path = self.abs(rel);
+            match self.link.call(|s| async move { s.lstat(path).await }).await {
+                Ok(a) => break a.attrs,
+                Err(CallError::Transport(_)) if attempt == 0 => attempt += 1,
+                Err(e) => return Err(nfs_error(e)),
+            }
+        };
+        let mut attrs = self.attrs.lock().unwrap();
+        if attrs.len() >= MAX_CACHED_ATTRS {
+            attrs.retain(|_, (at, _)| at.elapsed() < CACHE_TTL);
+        }
+        attrs.insert(id, (Instant::now(), a.clone()));
         Ok(a)
     }
 
@@ -573,7 +579,7 @@ impl SftpFs {
         }
     }
 
-    async fn read_handle(&self, id: fileid3, path: &str) -> Result<String, nfsstat3> {
+    async fn read_handle(&self, id: fileid3, path: &str) -> Result<String, CallError> {
         self.sweep_handles().await;
         let generation = self.link.generation();
         if let Some(h) = self.handles.lock().unwrap().get_mut(&id)
@@ -586,8 +592,7 @@ impl SftpFs {
         let handle = self
             .link
             .call(|s| async move { s.open(p, OpenFlags::READ, FileAttributes::empty()).await })
-            .await
-            .map_err(nfs_error)?
+            .await?
             .handle;
         self.handles.lock().unwrap().insert(
             id,
@@ -610,12 +615,42 @@ impl SftpFs {
         {
             return Ok(listing.entries.clone());
         }
+        let mut entries = match self.list_once(dir).await {
+            Err(CallError::Transport(_)) => self.list_once(dir).await,
+            other => other,
+        }
+        .map_err(nfs_error)?;
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        let now = Instant::now();
+        {
+            let mut ids = self.ids.lock().unwrap();
+            let mut attrs = self.attrs.lock().unwrap();
+            for (name, a) in &entries {
+                attrs.insert(ids.id(&child(dir, name)), (now, a.clone()));
+            }
+        }
+        let mut listings = self.listings.lock().unwrap();
+        if listings.len() >= MAX_CACHED_LISTINGS {
+            listings.retain(|_, l| l.at.elapsed() < CACHE_TTL);
+        }
+        listings.insert(
+            dirid,
+            Listing {
+                at: now,
+                entries: entries.clone(),
+            },
+        );
+        Ok(entries)
+    }
+}
+
+impl SftpFs {
+    async fn list_once(&self, dir: &str) -> Result<Vec<(String, FileAttributes)>, CallError> {
         let path = self.abs(dir);
         let handle = self
             .link
             .call(|s| async move { s.opendir(path).await })
-            .await
-            .map_err(nfs_error)?
+            .await?
             .handle;
         let mut entries = Vec::new();
         let outcome = loop {
@@ -627,32 +662,54 @@ impl SftpFs {
                         .filter(|f| f.filename != "." && f.filename != "..")
                         .map(|f| (f.filename, f.attrs)),
                 ),
-                Err(CallError::Status(StatusCode::Eof)) => break Ok(()),
-                Err(e) => break Err(nfs_error(e)),
+                Err(CallError::Status(StatusCode::Eof)) => break Ok(entries),
+                Err(e) => break Err(e),
             }
         };
         let _ = self
             .link
             .call(|s| async move { s.close(handle).await })
             .await;
-        outcome?;
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
-        let now = Instant::now();
-        {
-            let mut ids = self.ids.lock().unwrap();
-            let mut attrs = self.attrs.lock().unwrap();
-            for (name, a) in &entries {
-                attrs.insert(ids.id(&child(dir, name)), (now, a.clone()));
+        outcome
+    }
+
+    /// One READ through the cached handle. A transport failure is returned
+    /// as such so the caller can retry on a fresh session: reads are safe
+    /// to repeat, unlike creations, removals or renames.
+    async fn read_once(
+        &self,
+        id: fileid3,
+        path: &str,
+        offset: u64,
+        count: u32,
+    ) -> Result<(Vec<u8>, bool), CallError> {
+        let handle = self.read_handle(id, path).await?;
+        // Issue every chunk at once: SFTP pipelines requests by id.
+        let reads = (0..(count as usize).div_ceil(CHUNK)).map(|i| {
+            let h = handle.clone();
+            let off = offset + (i * CHUNK) as u64;
+            let len = (count as usize - i * CHUNK).min(CHUNK) as u32;
+            self.link
+                .call(move |s| async move { s.read(h, off, len).await })
+        });
+        let mut data = Vec::with_capacity(count as usize);
+        let mut eof = false;
+        for result in futures::future::join_all(reads).await {
+            match result {
+                Ok(_) if eof => {}
+                Ok(chunk) => {
+                    eof = chunk.data.len() < CHUNK;
+                    data.extend_from_slice(&chunk.data);
+                }
+                Err(CallError::Status(StatusCode::Eof)) => eof = true,
+                Err(e) => {
+                    self.forget_handle(id).await;
+                    return Err(e);
+                }
             }
         }
-        self.listings.lock().unwrap().insert(
-            dirid,
-            Listing {
-                at: now,
-                entries: entries.clone(),
-            },
-        );
-        Ok(entries)
+        let eof = eof || data.len() < count as usize;
+        Ok((data, eof))
     }
 }
 
@@ -724,33 +781,12 @@ impl NFSFileSystem for SftpFs {
             let end = start.saturating_add(count as usize).min(data.len());
             return Ok((data[start..end].to_vec(), end == data.len()));
         }
-        let handle = self.read_handle(id, &self.abs(&rel)).await?;
-        // Issue every chunk at once: SFTP pipelines requests by id.
-        let reads = (0..(count as usize).div_ceil(CHUNK)).map(|i| {
-            let h = handle.clone();
-            let off = offset + (i * CHUNK) as u64;
-            let len = (count as usize - i * CHUNK).min(CHUNK) as u32;
-            self.link
-                .call(move |s| async move { s.read(h, off, len).await })
-        });
-        let mut data = Vec::with_capacity(count as usize);
-        let mut eof = false;
-        for result in futures::future::join_all(reads).await {
-            match result {
-                Ok(_) if eof => {}
-                Ok(chunk) => {
-                    eof = chunk.data.len() < CHUNK;
-                    data.extend_from_slice(&chunk.data);
-                }
-                Err(CallError::Status(StatusCode::Eof)) => eof = true,
-                Err(e) => {
-                    self.forget_handle(id).await;
-                    return Err(nfs_error(e));
-                }
-            }
-        }
-        let eof = eof || data.len() < count as usize;
-        Ok((data, eof))
+        let path = self.abs(&rel);
+        let result = match self.read_once(id, &path, offset, count).await {
+            Err(CallError::Transport(_)) => self.read_once(id, &path, offset, count).await,
+            other => other,
+        };
+        result.map_err(nfs_error)
     }
 
     async fn write(&self, id: fileid3, offset: u64, data: &[u8]) -> Result<fattr3, nfsstat3> {
@@ -1136,14 +1172,22 @@ mod tests {
         let options = mount_options(4242);
         assert!(options.contains("port=4242,mountport=4242"));
         assert!(options.contains("soft"));
-        // timeo is in tenths of a second.
-        let timeo: u64 = options
-            .split(',')
-            .find_map(|o| o.strip_prefix("timeo="))
-            .unwrap()
-            .parse()
-            .unwrap();
-        assert!(Duration::from_millis(timeo * 100) > OPERATION_TIMEOUT);
+        let value = |key: &str| -> u64 {
+            options
+                .split(',')
+                .find_map(|o| o.strip_prefix(key))
+                .unwrap()
+                .parse()
+                .unwrap()
+        };
+        // A soft mount fails after `retrans` intervals of `timeo` tenths of a
+        // second. Together they must outlast the bridge's own deadline, so
+        // the kernel never gives up on a bridge that is still answering.
+        assert!(
+            Duration::from_millis(value("timeo=") * 100) * value("retrans=") as u32
+                > OPERATION_TIMEOUT
+        );
+        assert!(value("retrans=") >= 2);
     }
 
     #[test]
