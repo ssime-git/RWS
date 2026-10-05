@@ -664,8 +664,10 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
         let mount = temp.path().join("mnt");
+        // Through /bin/sh for the same ETXTBSY reason as the SSHFS test.
         let spawn = |subcommand: &str| {
-            std::process::Command::new(&program)
+            std::process::Command::new("/bin/sh")
+                .arg(&program)
                 .args([subcommand, "dev@host:/srv/data"])
                 .arg(&mount)
                 .spawn()
@@ -698,8 +700,12 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
         let mount = temp.path().join("mnt");
+        // Run the script through /bin/sh rather than executing the file just
+        // written: on Linux, a fork in a parallel test can briefly hold the
+        // write descriptor and make exec fail with ETXTBSY.
         let spawn = |source: &str, root: &Path| {
-            std::process::Command::new(&program)
+            std::process::Command::new("/bin/sh")
+                .arg(&program)
                 .arg(source)
                 .arg(root)
                 .args(["-o", "options"])
