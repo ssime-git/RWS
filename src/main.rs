@@ -130,6 +130,15 @@ enum Action {
         #[arg(long)]
         raw_names: bool,
     },
+    /// Serve one workspace through the localhost NFS bridge (started by connect).
+    #[command(name = "nfs-bridge", hide = true)]
+    NfsBridge {
+        /// host:remote_root, as for SSHFS.
+        source: String,
+        mount: PathBuf,
+        #[arg(long)]
+        export: String,
+    },
     #[command(name = "disconnect", visible_alias = "unmount")]
     Unmount {
         workspace: String,
@@ -169,6 +178,8 @@ enum Action {
 enum Backend {
     Default,
     Fskit,
+    /// Built-in localhost NFS bridge over SFTP: no macFUSE or SSHFS needed.
+    Nfs,
 }
 #[derive(Subcommand)]
 enum HookAction {
@@ -206,6 +217,12 @@ enum WorkspaceAction {
         mount: PathBuf,
     },
     List,
+    /// Change where a disconnected workspace mounts (default: ~/RWS/NAME).
+    Relocate {
+        name: String,
+        #[arg(long)]
+        mount: Option<PathBuf>,
+    },
 }
 fn main() {
     match run(Cli::parse()) {
@@ -455,6 +472,18 @@ fn run_with_origin(cli: Cli, origin: OperationOrigin) -> Result<i32, String> {
     } else {
         origin
     };
+    if let Action::NfsBridge {
+        source,
+        mount,
+        export,
+    } = &cli.command
+    {
+        let (host, remote_root) = source
+            .split_once(':')
+            .ok_or("nfs-bridge source must be host:remote_root")?;
+        rws::nfs_bridge::serve(host, remote_root, mount, export)?;
+        return Ok(0);
+    }
     let explicit_config = cli.config.is_some();
     let path = match cli.config {
         Some(p) => p,
@@ -702,6 +731,7 @@ fn execute_action(
             }
             if let Some(backend) = backend {
                 options.fskit = matches!(backend, Backend::Fskit);
+                options.nfs = matches!(backend, Backend::Nfs);
             }
             Config::set_mount_options(path, options)?;
             println!("Mount settings saved in {}", path.display());
@@ -802,7 +832,31 @@ fn execute_action(
             );
             Ok(0)
         }
-        Action::Workspace { .. } => unreachable!(),
+        Action::Workspace {
+            action: WorkspaceAction::Relocate { name, mount },
+        } => {
+            let name = name.as_str();
+            let w = config.find(name)?;
+            if rws::lifecycle::identity(&w.mount_root)?.is_some() {
+                return Err(format!(
+                    "{name} is mounted at {}; disconnect it before relocating",
+                    w.mount_root.display()
+                ));
+            }
+            let target = match mount {
+                Some(mount) => mount.clone(),
+                None => rws::nfs_bridge::default_mount_root(
+                    std::path::Path::new(&std::env::var_os("HOME").ok_or("HOME is unset")?),
+                    name,
+                ),
+            };
+            let _guard = rws::lifecycle::lock(path, &config, w)?;
+            rws::lifecycle::forget(path, &config, w)?;
+            Config::relocate(path, name, target.clone())?;
+            println!("{name} now mounts at {}", target.display());
+            Ok(0)
+        }
+        Action::Workspace { .. } | Action::NfsBridge { .. } => unreachable!(),
         Action::Exec {
             workspace,
             cwd,
@@ -948,11 +1002,26 @@ fn execute_action(
             raw_names,
         } => {
             let w = config.find(&workspace)?;
+            let nfs = config.mount.nfs && !fskit;
             let fskit = fskit || config.mount.fskit;
             if !cfg!(target_os = "macos") {
                 return Err("mount is currently supported on macOS only".into());
             }
-            let program = sshfs_program(path, &config)?;
+            let program = if nfs {
+                std::env::current_exe()
+                    .map_err(|e| format!("find RWS executable: {e}"))?
+                    .into_os_string()
+                    .into_string()
+                    .map_err(|_| "RWS executable path is not UTF-8")?
+            } else {
+                sshfs_program(path, &config)?
+            };
+            if nfs && w.mount_root.starts_with("/Volumes") {
+                return Err(format!(
+                    "the NFS backend cannot create mount points under /Volumes without root; run: rws workspace relocate {}",
+                    w.name
+                ));
+            }
             if fskit && w.mount_root.parent() != Some(std::path::Path::new("/Volumes")) {
                 return Err("FSKit requires a mount point directly under /Volumes".into());
             }
@@ -1028,7 +1097,11 @@ fn execute_action(
                         return Err("a filesystem is already mounted here, but its identity is unverified; leaving it untouched. Use connect NAME --verify-existing to verify it against SSH without disconnecting".into());
                     }
                 }
-                let version = check_sshfs(path, &config)?;
+                let version = if nfs {
+                    String::new()
+                } else {
+                    check_sshfs(path, &config)?
+                };
                 if fskit && !raw_names && !version.contains("3.7.5-rws-fskit3") {
                     return Err("FSKit Unicode support requires the RWS SSHFS build: run scripts/build-sshfs-fskit.sh and set RWS_SSHFS to its output. Use --raw-names only for intentional unconverted filename access".into());
                 }
@@ -1057,21 +1130,33 @@ fn execute_action(
                     );
                 }
             }
-            let mut args = vec![
+            let mut args = if nfs {
+                vec![rws::lifecycle::NFS_BRIDGE_COMMAND.to_string()]
+            } else {
+                vec![]
+            };
+            args.extend([
                 format!("{}:{}", w.host, w.remote_root),
                 w.mount_root.to_string_lossy().into_owned(),
                 "-o".into(),
                 "ConnectTimeout=10,ServerAliveInterval=15,ServerAliveCountMax=3,BatchMode=yes"
                     .into(),
-            ];
+            ]);
+            if nfs {
+                // The bridge takes its SSH options itself; only the export differs.
+                args.truncate(3);
+                args.extend(["--export".into(), w.name.clone()]);
+            }
             if fskit {
                 args.extend(["-o".into(), "backend=fskit".into()]);
             }
             if fskit && !raw_names {
                 args.extend(["-o".into(), "rws_unicode".into()]);
             }
-            args.extend(["-o".into(), format!("volname=RWS-{}", w.name)]);
-            args.push("-f".into());
+            if !nfs {
+                args.extend(["-o".into(), format!("volname=RWS-{}", w.name)]);
+                args.push("-f".into());
+            }
             if dry_run {
                 return invoke(&program, &args, true, false);
             }
@@ -1102,7 +1187,7 @@ fn execute_action(
             rws::lifecycle::record(path, &config, w, actual).map_err(|e| format!("volume is mounted, but its identity could not be saved: {e}; eject through Finder before reconnecting"))?;
             // SSHFS continues independently and exits when the OS unmounts its volume.
             println!("Mounted {} at {}", w.name, w.mount_root.display());
-            eprintln!("SSHFS log: {}", log.display());
+            eprintln!("Mount log: {}", log.display());
             Ok(0)
         }
         Action::Unmount { workspace, dry_run } => {
@@ -1207,6 +1292,7 @@ mod maintenance_status_tests {
             rws::config::MountOptions {
                 sshfs: Some("/nonexistent/rws-test-sshfs".into()),
                 fskit: false,
+                nfs: false,
             },
         )
         .unwrap();

@@ -129,6 +129,9 @@ pub fn mountpoint_answers(root: &Path, timeout: std::time::Duration) -> Result<(
         .and_then(std::convert::identity)
 }
 
+/// Hidden subcommand under which RWS serves an NFS-backed workspace.
+pub const NFS_BRIDGE_COMMAND: &str = "nfs-bridge";
+
 /// Find SSHFS server processes started for exactly this workspace: the
 /// command line must begin with the configured executable followed by this
 /// source and mount point, as `connect` spawns them. Nothing looser matches.
@@ -154,10 +157,16 @@ fn stale_server_pids(program: &Path, source: &str, mount_root: &Path) -> Result<
         // never match — the repair then reports the survivor instead of
         // killing a wrong process.
         let words: Vec<&str> = command.split_whitespace().collect();
+        // The NFS backend's server is RWS itself: `rws nfs-bridge SOURCE MOUNT`.
         let matches = |offset: usize| {
+            let rest = if words.get(offset + 1) == Some(&NFS_BRIDGE_COMMAND) {
+                offset + 2
+            } else {
+                offset + 1
+            };
             words.get(offset) == Some(&program.as_ref())
-                && words.get(offset + 1) == Some(&source)
-                && words.get(offset + 2) == Some(&mount_root.as_ref())
+                && words.get(rest) == Some(&source)
+                && words.get(rest + 1) == Some(&mount_root.as_ref())
         };
         if (matches(0) || matches(1))
             && let Ok(pid) = pid.parse::<i32>()
@@ -647,6 +656,39 @@ mod tests {
     fn nix_is_root() -> bool {
         unsafe { libc::geteuid() == 0 }
     }
+    #[test]
+    fn stale_nfs_bridges_are_matched_by_their_subcommand() {
+        let temp = tempfile::tempdir().unwrap();
+        let program = temp.path().join("rws");
+        fs::write(&program, "#!/bin/sh\nwhile :; do sleep 1; done\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+        let mount = temp.path().join("mnt");
+        let spawn = |subcommand: &str| {
+            std::process::Command::new(&program)
+                .args([subcommand, "dev@host:/srv/data"])
+                .arg(&mount)
+                .spawn()
+                .unwrap()
+        };
+        let mut bridge = spawn(NFS_BRIDGE_COMMAND);
+        let mut other = spawn("exec");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let ended = terminate_stale_servers(
+            &program,
+            "dev@host:/srv/data",
+            &mount,
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(ended, 1);
+        assert!(bridge.try_wait().unwrap().is_some());
+        assert!(other.try_wait().unwrap().is_none());
+        let _ = other.kill();
+        let _ = other.wait();
+        let _ = bridge.wait();
+    }
+
     #[test]
     fn stale_servers_are_matched_exactly_and_terminated() {
         let temp = tempfile::tempdir().unwrap();
