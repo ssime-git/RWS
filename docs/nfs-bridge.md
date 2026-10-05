@@ -46,8 +46,8 @@ backends can stay installed while you compare them.
 
 | Situation | Result |
 | --- | --- |
-| Bridge process killed | Operations fail within about a second; `umount -f` works without sudo |
-| SSH connection lost (sleep, network change) | The failing operation returns an I/O error; the next one reconnects SFTP automatically |
+| Bridge process killed | Pending operations fail within about 8 seconds; `umount -f` works without sudo |
+| SSH connection lost (sleep, network change) | The bridge reconnects and repeats reads, listings and lookups; an in-flight write, creation, removal or rename fails with an I/O error instead of being repeated |
 | Volume unmounted (Finder eject, `rws disconnect`) | The bridge notices within a second and exits |
 | Autostart, volume missing | The LaunchAgent remounts it on its next 30-second pass |
 | Editor saves through a temporary file and rename | Supported through OpenSSH `posix-rename@openssh.com` |
@@ -65,7 +65,10 @@ seconds, once the bridge closes its idle read handle.
 - **Server:** remote renames use an OpenSSH extension. Other SFTP servers are untested.
 - **Names:** remote names must be valid UTF-8. A name stored decomposed (NFD) on the remote host cannot be opened.
 - **Hard links:** not supported.
-- **Network:** the client mounts `soft` with a 20-second timeout, and the bridge answers within 15 seconds. A stalled link therefore gives errors, not a frozen Finder.
+- **Network:** the client mounts `soft` (`timeo=100,retrans=10`), and the bridge answers every request within 15 seconds. A stalled link therefore gives errors, not a frozen Finder.
+- **Local access:** the bridge listens on `127.0.0.1` without authenticating callers. Any local process or account on the Mac can connect to its port and act with the SSH account's rights. This is acceptable on a single-user Mac only.
+- **Memory:** attribute and listing caches are pruned once they grow. The table mapping file ids to paths keeps every path seen since the mount, so a bridge that walks a very large tree grows until it is remounted.
+- **Stalled volume:** RWS does not repair it automatically. `rws repair --workspace NAME --mounts` remounts it, and no sudo is needed with this backend.
 
 ## Diagnose
 

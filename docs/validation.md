@@ -574,22 +574,35 @@ disposable remote directory, with no macFUSE component involved:
 - **Listing:** `scripts/test-mount-listing.py` passed on the mounted root.
 - **Remote execution:** `rws exec -- pwd` from inside the mount returned the
   mapped remote directory.
-- **Throughput:** a 32 MiB read took 3.6–3.8 s, against 3.7 s for a direct
-  `sftp` download over the same 20 ms link. The first prototype took 7 s before
-  1 MiB NFS transfers and pipelined SFTP reads were added.
-- **Footprint:** about 8–30 MiB resident per bridge, 0 % CPU when idle, and a
-  2.2 MiB prototype binary.
-- **Bridge killed with SIGKILL:** `ls` returned within one second, and
-  `umount -f` succeeded without sudo in 0.07 s with no process left behind.
-- **SSH session killed (three rounds):** one operation returned an I/O error,
-  then the bridge reconnected and a 32 MiB read succeeded.
+- **Throughput:** uncached 32 MiB reads took 3.8–5 s with the release build,
+  against 3.7 s for a direct `sftp` download over the same 20 ms link. The
+  first prototype took 7 s before 1 MiB NFS transfers and pipelined SFTP reads
+  were added.
+- **Footprint:** about 8–30 MiB resident per bridge when idle, with a peak near
+  120 MiB during back-to-back 32 MiB transfers; 0 % CPU when idle; 2.2 MiB
+  prototype binary.
+- **Bridge killed with SIGKILL:** with the first mount options (`retrans=1`),
+  `ls` returned within one second and `umount -f` succeeded without sudo in
+  0.07 s. With the final options (`timeo=100,retrans=10`), pending operations
+  failed after 7.6 s and `umount -f` took 1.4 s, still without sudo and with no
+  process left behind.
+- **SSH session killed, first version:** each drop produced one failed
+  operation. Read-ahead failures surfaced as `Operation timed out` within
+  2–4 s, because `retrans=1` made the kernel give up while the bridge was
+  still answering.
+- **SSH session killed, final version:** the bridge retries reads, listings and
+  attribute lookups once after reconnecting, and the mount keeps macOS's
+  default retransmit count. In 10 rounds, each reading a never-read 32 MiB
+  file right after killing the SSH child, all 10 reads succeeded in 3.8–6 s
+  with no error visible to the application.
 - **Stale read (prototype bug):** a remote atomic replacement was not visible.
   The bridge now closes idle read handles after two seconds, and the same test
   shows the new content.
 - **Disconnect:** `rws disconnect` unmounted the volume and the bridge exited by
   itself.
 - **Automatic remount:** after an external `diskutil unmount`, the LaunchAgent
-  remounted the workspace within 14 seconds.
+  remounted the workspace within 14 seconds. This was observed with the first
+  version.
 
 The user's two real workspaces were moved to `~/RWS/razer-1` and
 `~/RWS/ssime-omarchy` with `rws workspace relocate`, then connected with
@@ -601,6 +614,9 @@ Not yet validated:
   Finder automation was declined for this run.
 - GUI editors.
 - Recovery after sleep and wake.
-- The macOS app's settings screen, which still offers only SSHFS/FSKit.
+- The macOS app build: it could not be compiled here (no Xcode), and the
+  installed app predates this change and rejects the configuration.
+- The two real workspaces still run bridges from the first version, until
+  their next remount.
 
 macFUSE was still installed during these checks.
