@@ -7,6 +7,14 @@ final class CommandBuilderTests: XCTestCase {
         XCTAssertEqual(CLICommand.installDurable(config: config).arguments,
                        ["--config", "/tmp/config.json", "install", "--skip-integrations"])
     }
+    func testSettingsPreserveTheNFSBackend() {
+        let config = URL(fileURLWithPath: "/tmp/rws.json")
+        XCTAssertEqual(CLICommand.settings(config: config, sshfs: "", fskit: false, nfs: true).arguments,
+                       ["--config", "/tmp/rws.json", "settings", "--backend", "nfs"])
+        XCTAssertEqual(CLICommand.settings(config: config, sshfs: "/opt/sshfs", fskit: true).arguments,
+                       ["--config", "/tmp/rws.json", "settings", "--sshfs", "/opt/sshfs", "--backend", "fskit"])
+    }
+
     func testArgumentsKeepUserValuesAsIndividualArguments() {
         let config = URL(fileURLWithPath: "/tmp/config with spaces.json")
         XCTAssertEqual(

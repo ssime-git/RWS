@@ -549,3 +549,94 @@ After this fix, three consecutive local Rust runs each passed 141 tests, excludi
 the one known sandbox-blocked process-inspection test. Formatting, Clippy with
 warnings denied, and diff whitespace checks passed. Full Swift/XCTest and the
 unfiltered cross-platform Rust suites remain CI checks at this recording point.
+
+## NFS bridge backend — 2026-10-05
+
+Context: on the tested Mac (macOS 27.0.1, macFUSE 5.4, patched SSHFS
+3.7.5-rws-fskit3), 63 FSKit mount attempts started between 30 September and
+3 October never completed. From then on, every SSHFS mount timed out after 30
+seconds, including direct SSHFS on a fresh mount point.
+
+The new [NFS bridge backend](nfs-bridge.md) was checked on this Mac against a
+disposable remote directory, with no macFUSE component involved:
+
+- **Mounting:** `mount_nfs` worked without sudo on a user-owned directory. On a
+  user-owned directory under `/Volumes` it also worked, but macOS deleted that
+  directory at unmount, so the backend requires `~/RWS/NAME`-style mount points.
+- **File operations, all verified independently over SSH:** create, append,
+  rename, replace with `mv -f`, directory rename with descendants, recursive
+  delete, an 8 MiB and a 32 MiB copy with matching SHA-1, truncate, symlink,
+  chmod and mtime.
+- **Editor-style save:** temporary file, fsync, then `os.replace`.
+- **Unicode:** a name created in NFD was readable through NFC and the reverse,
+  and was stored composed remotely, including an emoji.
+- **AppleDouble:** no `._*` file reached the remote host.
+- **Listing:** `scripts/test-mount-listing.py` passed on the mounted root.
+- **Remote execution:** `rws exec -- pwd` from inside the mount returned the
+  mapped remote directory.
+- **Throughput:** uncached 32 MiB reads took 3.8–5 s with the release build,
+  against 3.7 s for a direct `sftp` download over the same 20 ms link. The
+  first prototype took 7 s before 1 MiB NFS transfers and pipelined SFTP reads
+  were added.
+- **Footprint:** about 8–30 MiB resident per bridge when idle, with a peak near
+  120 MiB during back-to-back 32 MiB transfers; 0 % CPU when idle; 2.2 MiB
+  prototype binary.
+- **Bridge killed with SIGKILL:** with the first mount options (`retrans=1`),
+  `ls` returned within one second and `umount -f` succeeded without sudo in
+  0.07 s. With the final options (`timeo=100,retrans=10`), pending operations
+  failed after 7.6 s and `umount -f` took 1.4 s, still without sudo and with no
+  process left behind.
+- **SSH session killed, first version:** each drop produced one failed
+  operation. Read-ahead failures surfaced as `Operation timed out` within
+  2–4 s, because `retrans=1` made the kernel give up while the bridge was
+  still answering.
+- **SSH session killed, final version:** the bridge retries reads, listings and
+  attribute lookups once after reconnecting, and the mount keeps macOS's
+  default retransmit count. In 10 rounds, each reading a never-read 32 MiB
+  file right after killing the SSH child, all 10 reads succeeded in 3.8–6 s
+  with no error visible to the application.
+- **Stale read (prototype bug):** a remote atomic replacement was not visible.
+  The bridge now closes idle read handles after two seconds, and the same test
+  shows the new content.
+- **Disconnect:** `rws disconnect` unmounted the volume and the bridge exited by
+  itself.
+- **Automatic remount:** after an external `diskutil unmount`, the LaunchAgent
+  remounted the workspace within 14 seconds. This was observed with the first
+  version.
+
+The user's two real workspaces were moved to `~/RWS/razer-1` and
+`~/RWS/ssime-omarchy` with `rws workspace relocate`, then connected with
+`rws settings --backend nfs`. `rws doctor` reported every check as OK.
+
+Not yet validated:
+
+- Finder interaction (folder creation, copy/paste, sidebar), because access to
+  Finder automation was declined for this run.
+- GUI editors.
+- Recovery after sleep and wake.
+- The macOS app build: it could not be compiled here (no Xcode), and the
+  installed app predates this change and rejects the configuration.
+- The two real workspaces still run bridges from the first version, until
+  their next remount.
+
+macFUSE was still installed during these checks.
+
+## NFS bridge automatic recovery — 2026-10-06
+
+An isolated Omarchy workspace used a newly created directory under `/tmp` and
+a local mount under `/private/tmp`; neither production mount was changed. The
+bridge process for that trial was identified by its full command and killed.
+The first automatic `connect --if-desired` reported an unresponsive verified
+mount and saved a recovery observation without ejecting it. A second pass
+before 30 seconds also left it mounted. A later pass, after 30 seconds and a
+successful noninteractive SSH check, force-unmounted and remounted only the
+trial volume. Reading the independently created `probe.txt` through the new
+mount returned `recovery-ok`. The trial was disconnected and its remote file
+and directory were removed. The production Razer and Omarchy mount-table
+entries were unchanged during the trial; Omarchy's production bridge remained
+absent and its old mount was not repaired by this test.
+
+The full Rust suite passed locally (154 tests), as did formatting and Clippy
+with warnings denied. This validates recovery after a dead bridge
+on an isolated volume. Recovery after reboot or sleep, live-bridge SSH outages,
+and production rollout remain unverified.
