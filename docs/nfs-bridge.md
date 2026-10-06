@@ -50,6 +50,7 @@ backends can stay installed while you compare them.
 | SSH connection lost (sleep, network change) | The bridge reconnects and repeats reads, listings and lookups; an in-flight write, creation, removal or rename fails with an I/O error instead of being repeated |
 | Volume unmounted (Finder eject, `rws disconnect`) | The bridge notices within a second and exits |
 | Autostart, volume missing | The LaunchAgent remounts it on its next 30-second pass |
+| Bridge process gone, verified volume unresponsive | The LaunchAgent waits for two observations at least 30 seconds apart and working SSH, then force-unmounts and remounts only that workspace |
 | Editor saves through a temporary file and rename | Supported through OpenSSH `posix-rename@openssh.com` |
 | `._*` AppleDouble files and `.DS_Store` | Kept in the bridge's memory and never written remotely; extended attributes are lost at unmount |
 | File names | Composed (NFC) before reaching the remote host; NFD and NFC spellings open the same file |
@@ -68,7 +69,7 @@ seconds, once the bridge closes its idle read handle.
 - **Network:** the client mounts `soft` (`timeo=100,retrans=10`), and the bridge answers every request within 15 seconds. A stalled link therefore gives errors, not a frozen Finder.
 - **Local access:** the bridge listens on `127.0.0.1` without authenticating callers. Any local process or account on the Mac can connect to its port and act with the SSH account's rights. This is acceptable on a single-user Mac only.
 - **Memory:** attribute and listing caches are pruned once they grow. The table mapping file ids to paths keeps every path seen since the mount, so a bridge that walks a very large tree grows until it is remounted.
-- **Stalled volume:** RWS does not repair it automatically. `rws repair --workspace NAME --mounts` remounts it, and no sudo is needed with this backend.
+- **Stalled volume:** Automatic repair requires the matching bridge to be gone and the volume identity to remain unchanged. A live bridge keeps retrying SFTP instead. If recovery is delayed, inspect `rws status` and the private mount log. A failed write cannot be restored after the bridge exits.
 
 ## Diagnose
 

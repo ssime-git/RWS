@@ -378,6 +378,58 @@ fn reconcile_verified_mount(
         }
     }
 }
+
+fn ssh_ready_for_nfs_recovery(host: &str) -> bool {
+    let mut command = Command::new("ssh");
+    command.args([
+        "-T",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=8",
+        "--",
+        host,
+        "true",
+    ]);
+    rws::transport::bounded_output(&mut command, std::time::Duration::from_secs(12))
+        .is_ok_and(|output| output.status.success())
+}
+
+fn automatic_nfs_repair_ready(
+    path: &std::path::Path,
+    config: &Config,
+    w: &Workspace,
+    identity: &rws::lifecycle::MountIdentity,
+    program: &std::path::Path,
+    unhealthy: bool,
+    automatic: bool,
+) -> Result<bool, String> {
+    if !automatic || !config.mount.nfs {
+        return Ok(false);
+    }
+    if !unhealthy {
+        rws::lifecycle::clear_dead_bridge_observation(path, config, w)?;
+        return Ok(false);
+    }
+    let source = format!("{}:{}", w.host, w.remote_root);
+    if !rws::lifecycle::matching_server_pids(program, &source, &w.mount_root)?.is_empty() {
+        // A live bridge reconnects SFTP itself after a network interruption.
+        rws::lifecycle::clear_dead_bridge_observation(path, config, w)?;
+        return Ok(false);
+    }
+    if !rws::lifecycle::observe_dead_bridge(path, config, w, identity)? {
+        eprintln!(
+            "NFS bridge for {} is absent; waiting for a second health check",
+            w.name
+        );
+        return Ok(false);
+    }
+    if !ssh_ready_for_nfs_recovery(&w.host) {
+        eprintln!("NFS bridge for {} is absent; waiting for SSH", w.name);
+        return Ok(false);
+    }
+    Ok(true)
+}
 fn sshfs_program(config_path: &std::path::Path, config: &Config) -> Result<String, String> {
     rws::installation::select_sshfs(config_path, config)?
         .into_os_string()
@@ -994,7 +1046,7 @@ fn execute_action(
         }
         Action::Mount {
             workspace,
-            if_desired: _,
+            if_desired,
             verify_existing,
             repair,
             dry_run,
@@ -1032,11 +1084,38 @@ fn execute_action(
                             &w.mount_root,
                             std::time::Duration::from_secs(4),
                         );
+                        let auto_repair = automatic_nfs_repair_ready(
+                            path,
+                            &config,
+                            w,
+                            &actual,
+                            std::path::Path::new(&program),
+                            health.is_err(),
+                            if_desired,
+                        )?;
                         let reconnect = reconcile_verified_mount(
                             &w.name,
                             health,
-                            repair,
+                            repair || auto_repair,
                             |reason| {
+                                if auto_repair {
+                                    if rws::lifecycle::identity(&w.mount_root)?.as_ref()
+                                        != Some(&actual)
+                                        || !rws::lifecycle::matching_server_pids(
+                                            std::path::Path::new(&program),
+                                            &format!("{}:{}", w.host, w.remote_root),
+                                            &w.mount_root,
+                                        )?
+                                        .is_empty()
+                                        || !ssh_ready_for_nfs_recovery(&w.host)
+                                    {
+                                        return Err("NFS recovery conditions changed; retry on the next automatic pass".into());
+                                    }
+                                    eprintln!(
+                                        "NFS bridge for {} stayed absent across two checks; recovering only its verified mount",
+                                        w.name
+                                    );
+                                }
                                 eprintln!(
                                     "Unresponsive mount ({reason}); ejecting {} before remounting.",
                                     w.mount_root.display()
@@ -1066,16 +1145,21 @@ fn execute_action(
                                     std::time::Duration::from_secs(10),
                                 )?;
                                 if ended > 0 {
-                                    eprintln!("Terminated {ended} stale SSHFS server process(es).");
+                                    let server = if nfs { "NFS bridge" } else { "SSHFS server" };
+                                    eprintln!("Terminated {ended} stale {server} process(es).");
                                 }
                                 rws::lifecycle::mountpoint_answers(
                                     &w.mount_root,
                                     std::time::Duration::from_secs(4),
                                 )
                                 .map_err(|reason| {
-                                    format!(
-                                        "{reason}; the FSKit service appears wedged, so mounting again would hang. Run: sudo pkill -9 fskitd (launchd restarts it), then retry; reboot as the fallback"
-                                    )
+                                    if nfs {
+                                        format!("{reason}; the NFS mount point did not recover after ejection")
+                                    } else {
+                                        format!(
+                                            "{reason}; the FSKit service appears wedged, so mounting again would hang. Run: sudo pkill -9 fskitd (launchd restarts it), then retry; reboot as the fallback"
+                                        )
+                                    }
                                 })?;
                                 Ok(())
                             },
@@ -1096,6 +1180,9 @@ fn execute_action(
                     } else {
                         return Err("a filesystem is already mounted here, but its identity is unverified; leaving it untouched. Use connect NAME --verify-existing to verify it against SSH without disconnecting".into());
                     }
+                }
+                if if_desired && nfs {
+                    rws::lifecycle::clear_dead_bridge_observation(path, &config, w)?;
                 }
                 let version = if nfs {
                     String::new()
@@ -1185,6 +1272,9 @@ fn execute_action(
                 format!("volume exists but verification failed: {e}; no ownership receipt saved")
             })?;
             rws::lifecycle::record(path, &config, w, actual).map_err(|e| format!("volume is mounted, but its identity could not be saved: {e}; eject through Finder before reconnecting"))?;
+            if nfs {
+                rws::lifecycle::clear_dead_bridge_observation(path, &config, w)?;
+            }
             // SSHFS continues independently and exits when the OS unmounts its volume.
             println!("Mounted {} at {}", w.name, w.mount_root.display());
             eprintln!("Mount log: {}", log.display());

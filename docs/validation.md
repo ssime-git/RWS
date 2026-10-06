@@ -620,3 +620,23 @@ Not yet validated:
   their next remount.
 
 macFUSE was still installed during these checks.
+
+## NFS bridge automatic recovery — 2026-10-06
+
+An isolated Omarchy workspace used a newly created directory under `/tmp` and
+a local mount under `/private/tmp`; neither production mount was changed. The
+bridge process for that trial was identified by its full command and killed.
+The first automatic `connect --if-desired` reported an unresponsive verified
+mount and saved a recovery observation without ejecting it. A second pass
+before 30 seconds also left it mounted. A later pass, after 30 seconds and a
+successful noninteractive SSH check, force-unmounted and remounted only the
+trial volume. Reading the independently created `probe.txt` through the new
+mount returned `recovery-ok`. The trial was disconnected and its remote file
+and directory were removed. The production Razer and Omarchy mount-table
+entries were unchanged during the trial; Omarchy's production bridge remained
+absent and its old mount was not repaired by this test.
+
+The full Rust suite passed locally (154 tests), as did formatting and Clippy
+with warnings denied. This validates recovery after a dead bridge
+on an isolated volume. Recovery after reboot or sleep, live-bridge SSH outages,
+and production rollout remain unverified.
