@@ -60,7 +60,8 @@ impl Layout {
 pub struct Installation {
     pub release: PathBuf,
     pub rws: PathBuf,
-    pub sshfs: PathBuf,
+    /// Absent when the NFS backend makes SSHFS unnecessary.
+    pub sshfs: Option<PathBuf>,
     pub generation: String,
 }
 
@@ -71,12 +72,14 @@ pub fn install(
     layout: &Layout,
     source_config: &Path,
     rws: &Path,
-    sshfs: &Path,
+    sshfs: Option<&Path>,
 ) -> Result<Installation, String> {
     let source = Config::load_existing(source_config)?;
     let source_receipts = source_receipt_directory(source_config, &source);
     validate_executable(rws, "RWS")?;
-    validate_executable(sshfs, "SSHFS")?;
+    if let Some(sshfs) = sshfs {
+        validate_executable(sshfs, "SSHFS")?;
+    }
     prepare_private_directory(&layout.root)?;
     prepare_private_directory(&layout.bin())?;
     prepare_private_directory(&layout.releases())?;
@@ -88,16 +91,21 @@ pub fn install(
     let staged_rws = layout
         .binary()
         .with_extension(format!("{}.tmp", std::process::id()));
-    let staged_sshfs_directory = release.join("sshfs");
-    create_fresh_private_directory(&staged_sshfs_directory)?;
-    let staged_sshfs = staged_sshfs_directory.join("sshfs");
     copy_executable(rws, &staged_rws)?;
-    copy_executable(sshfs, &staged_sshfs)?;
     validate_executable(&staged_rws, "staged RWS")?;
-    validate_executable(&staged_sshfs, "staged SSHFS")?;
-
     let mut activated = source;
-    activated.mount.sshfs = Some(path_string(&staged_sshfs)?);
+    let staged_sshfs = match sshfs {
+        Some(sshfs) => {
+            let directory = release.join("sshfs");
+            create_fresh_private_directory(&directory)?;
+            let staged = directory.join("sshfs");
+            copy_executable(sshfs, &staged)?;
+            validate_executable(&staged, "staged SSHFS")?;
+            activated.mount.sshfs = Some(path_string(&staged)?);
+            Some(staged)
+        }
+        None => None,
+    };
     activated.mount_state_generation = Some(generation.clone());
     let destination_state = state_directory(&layout.config_path(), &generation);
     let state_generation = layout.mount_state().join(&generation);
@@ -136,6 +144,23 @@ pub fn install(
 pub fn install_current(layout: &Layout, source_config: &Path) -> Result<Installation, String> {
     let config = Config::load_existing(source_config)?;
     let rws = std::env::current_exe().map_err(|e| format!("find current RWS executable: {e}"))?;
+    if config.mount.nfs {
+        // The bridge is part of RWS: nothing else to stage or validate.
+        if same_config_file(source_config, &layout.config_path())
+            && let Some(generation) = config.mount_state_generation.as_ref()
+            && validate_executable(&layout.binary(), "managed RWS binary").is_ok()
+            && fs::read(&rws).map_err(|e| e.to_string())?
+                == fs::read(layout.binary()).map_err(|e| e.to_string())?
+        {
+            return Ok(Installation {
+                release: layout.releases().join(generation),
+                rws: layout.binary(),
+                sshfs: None,
+                generation: generation.clone(),
+            });
+        }
+        return install(layout, source_config, &rws, None);
+    }
     let sshfs = effective_sshfs(source_config, &config)?;
     // Relaunching the same app must not rotate receipts or accumulate identical
     // SSHFS releases. Only reuse a complete canonical installation.
@@ -150,11 +175,11 @@ pub fn install_current(layout: &Layout, source_config: &Path) -> Result<Installa
         return Ok(Installation {
             release: layout.releases().join(generation),
             rws: layout.binary(),
-            sshfs,
+            sshfs: Some(sshfs),
             generation: generation.clone(),
         });
     }
-    install(layout, source_config, &rws, &sshfs)
+    install(layout, source_config, &rws, Some(&sshfs))
 }
 
 /// Select SSHFS for one invocation. A durable configuration is authoritative:
@@ -480,6 +505,7 @@ mod tests {
             MountOptions {
                 sshfs: None,
                 fskit: true,
+                nfs: false,
             },
         )
         .unwrap();
@@ -519,6 +545,27 @@ mod tests {
     }
 
     #[test]
+    fn nfs_install_stages_no_sshfs_and_keeps_the_backend() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_config = temp.path().join("source.json");
+        let mut source = config();
+        source.mount.fskit = false;
+        source.mount.nfs = true;
+        fs::write(&source_config, serde_json::to_vec(&source).unwrap()).unwrap();
+        let rws = temp.path().join("rws");
+        executable(&rws);
+        let layout = Layout::at(temp.path().join("Library/Application Support/RWS"));
+
+        let installed = install(&layout, &source_config, &rws, None).unwrap();
+        let active = Config::load_existing(&layout.config_path()).unwrap();
+
+        assert!(installed.sshfs.is_none());
+        assert!(!installed.release.join("sshfs").exists());
+        assert!(active.mount.nfs);
+        assert!(installed.rws.is_file());
+    }
+
+    #[test]
     fn install_stages_executables_and_activates_config_last() {
         let temp = tempfile::tempdir().unwrap();
         let source_config = temp.path().join("source.json");
@@ -529,22 +576,25 @@ mod tests {
         executable(&sshfs);
         let layout = Layout::at(temp.path().join("Library/Application Support/RWS"));
 
-        let installed = install(&layout, &source_config, &rws, &sshfs).unwrap();
+        let installed = install(&layout, &source_config, &rws, Some(&sshfs)).unwrap();
         let active = Config::load_existing(&layout.config_path()).unwrap();
 
         assert_eq!(
             fs::read(&source_config).unwrap(),
             serde_json::to_vec(&config()).unwrap()
         );
-        assert_eq!(active.mount.sshfs.as_deref(), installed.sshfs.to_str());
+        assert_eq!(
+            active.mount.sshfs.as_deref(),
+            installed.sshfs.as_deref().and_then(Path::to_str)
+        );
         assert_eq!(
             active.mount_state_generation.as_deref(),
             Some(installed.generation.as_str())
         );
         assert_eq!(installed.rws, layout.binary());
-        assert_eq!(installed.sshfs, installed.release.join("sshfs/sshfs"));
+        assert_eq!(installed.sshfs, Some(installed.release.join("sshfs/sshfs")));
         assert!(installed.rws.is_file());
-        assert!(installed.sshfs.is_file());
+        assert!(installed.sshfs.as_ref().unwrap().is_file());
         assert_eq!(
             fs::metadata(&installed.rws).unwrap().permissions().mode() & 0o777,
             0o700
@@ -569,12 +619,12 @@ mod tests {
         executable(&rws);
         executable(&sshfs);
         let layout = Layout::at(temp.path().join("support"));
-        let first = install(&layout, &source_config, &rws, &sshfs).unwrap();
+        let first = install(&layout, &source_config, &rws, Some(&sshfs)).unwrap();
         let old_config = fs::read(layout.config_path()).unwrap();
         let bad = temp.path().join("not-executable");
         fs::write(&bad, "not executable").unwrap();
 
-        assert!(install(&layout, &source_config, &rws, &bad).is_err());
+        assert!(install(&layout, &source_config, &rws, Some(&bad)).is_err());
         assert_eq!(fs::read(layout.config_path()).unwrap(), old_config);
         assert!(first.release.is_dir());
     }
@@ -601,7 +651,7 @@ mod tests {
         executable(&sshfs);
         let layout = Layout::at(temp.path().join("support"));
 
-        let installed = install(&layout, &source_config, &rws, &sshfs).unwrap();
+        let installed = install(&layout, &source_config, &rws, Some(&sshfs)).unwrap();
         let active = Config::load_existing(&layout.config_path()).unwrap();
         let state = layout
             .mount_state()

@@ -64,7 +64,14 @@ fn diagnose(path: &Path, selected: Option<&str>) -> Vec<Check> {
             },
         ));
     }
-    checks.push(check("sshfs", check_sshfs(path, &config)));
+    checks.push(check(
+        "sshfs",
+        if config.mount.nfs {
+            Ok("not required: the NFS backend uses the built-in bridge".into())
+        } else {
+            check_sshfs(path, &config)
+        },
+    ));
     match canonical_layout() {
         Ok(layout) => checks.push(check(
             "durable_binary",

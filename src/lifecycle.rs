@@ -129,12 +129,13 @@ pub fn mountpoint_answers(root: &Path, timeout: std::time::Duration) -> Result<(
         .and_then(std::convert::identity)
 }
 
+/// Hidden subcommand under which RWS serves an NFS-backed workspace.
+pub const NFS_BRIDGE_COMMAND: &str = "nfs-bridge";
+
 /// Find SSHFS server processes started for exactly this workspace: the
 /// command line must begin with the configured executable followed by this
 /// source and mount point, as `connect` spawns them. Nothing looser matches.
 fn stale_server_pids(program: &Path, source: &str, mount_root: &Path) -> Result<Vec<i32>, String> {
-    let program = program.to_string_lossy();
-    let mount_root = mount_root.to_string_lossy();
     let output = std::process::Command::new("/bin/ps")
         .args(["-axo", "pid=,command="])
         .output()
@@ -147,25 +148,37 @@ fn stale_server_pids(program: &Path, source: &str, mount_root: &Path) -> Result<
         let Some((pid, command)) = line.trim_start().split_once(' ') else {
             continue;
         };
-        // ps cannot show embedded spaces unambiguously; this whitespace
-        // tokenization intentionally matches only the executable, source
-        // and mount point as adjacent tokens (an interpreter such as
-        // /bin/sh may precede a script in tests). Paths with spaces simply
-        // never match — the repair then reports the survivor instead of
-        // killing a wrong process.
-        let words: Vec<&str> = command.split_whitespace().collect();
-        let matches = |offset: usize| {
-            words.get(offset) == Some(&program.as_ref())
-                && words.get(offset + 1) == Some(&source)
-                && words.get(offset + 2) == Some(&mount_root.as_ref())
-        };
-        if (matches(0) || matches(1))
+        if server_command_matches(command, program, source, mount_root)
             && let Ok(pid) = pid.parse::<i32>()
         {
             pids.push(pid);
         }
     }
     Ok(pids)
+}
+
+/// Inspect without changing a bridge. The same strict matcher is used by
+/// stale-server cleanup and automatic recovery after a vanished NFS bridge.
+pub fn matching_server_pids(
+    program: &Path,
+    source: &str,
+    mount_root: &Path,
+) -> Result<Vec<i32>, String> {
+    stale_server_pids(program, source, mount_root)
+}
+
+fn server_command_matches(command: &str, program: &Path, source: &str, mount_root: &Path) -> bool {
+    let command = command.strip_prefix("/bin/sh ").unwrap_or(command);
+    let program = program.to_string_lossy();
+    let mount_root = mount_root.to_string_lossy();
+    let matches = |arguments: String| {
+        command
+            .strip_prefix(&arguments)
+            .is_some_and(|tail| tail.is_empty() || tail.starts_with(' '))
+    };
+    matches(format!(
+        "{program} {NFS_BRIDGE_COMMAND} {source} {mount_root}"
+    )) || matches(format!("{program} {source} {mount_root}"))
 }
 
 /// Kill this workspace's stale SSHFS servers and wait, within the timeout,
@@ -188,8 +201,7 @@ pub fn terminate_stale_servers(
     while !stale_server_pids(program, source, mount_root)?.is_empty() {
         if std::time::Instant::now() >= deadline {
             return Err(
-                "a stale SSHFS server refuses to die (likely stuck in the kernel); run: sudo pkill -9 fskitd, or reboot"
-                    .into(),
+                "a stale mount server refuses to exit; inspect its process before retrying".into(),
             );
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -203,6 +215,112 @@ struct Receipt {
     remote: String,
     root: PathBuf,
     identity: MountIdentity,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DeadBridgeObservation {
+    identity: MountIdentity,
+    first_seen_millis: u128,
+}
+
+const AUTO_RECOVERY_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn dead_bridge_path(config_path: &Path, config: &Config, w: &Workspace) -> PathBuf {
+    receipt_path(config_path, config, w).with_extension("dead-bridge.json")
+}
+
+/// The operation lock serializes callers. Two LaunchAgent passes must see the
+/// same dead mount before an automatic force-unmount may be considered.
+pub fn observe_dead_bridge(
+    config_path: &Path,
+    config: &Config,
+    w: &Workspace,
+    identity: &MountIdentity,
+) -> Result<bool, String> {
+    observe_dead_bridge_at(
+        config_path,
+        config,
+        w,
+        identity,
+        std::time::SystemTime::now(),
+    )
+}
+
+fn observe_dead_bridge_at(
+    config_path: &Path,
+    config: &Config,
+    w: &Workspace,
+    identity: &MountIdentity,
+    now: std::time::SystemTime,
+) -> Result<bool, String> {
+    use std::{io::Write, os::unix::fs::OpenOptionsExt, time::UNIX_EPOCH};
+
+    let marker = dead_bridge_path(config_path, config, w);
+    create_receipt_directory(config_path, config, &marker)?;
+    if config.mount_state_generation.is_some() && !generated_state_is_safe(config_path, config) {
+        return Err("unsafe generated mount state directory".into());
+    }
+    let now_millis = now
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("automatic recovery clock: {e}"))?
+        .as_millis();
+    match fs::symlink_metadata(&marker) {
+        Ok(_) => {
+            if !durable_receipt_is_safe(&marker) {
+                return Err("unsafe automatic recovery marker".into());
+            }
+            let observation: DeadBridgeObservation = serde_json::from_slice(
+                &fs::read(&marker).map_err(|e| format!("read recovery marker: {e}"))?,
+            )
+            .map_err(|e| format!("invalid recovery marker: {e}"))?;
+            if observation.identity == *identity && now_millis >= observation.first_seen_millis {
+                return Ok(
+                    now_millis - observation.first_seen_millis >= AUTO_RECOVERY_GRACE.as_millis()
+                );
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(e) => return Err(format!("inspect recovery marker: {e}")),
+    }
+    let temp = marker.with_extension(format!("dead-bridge-{}.tmp", std::process::id()));
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&temp)
+        .map_err(|e| format!("create recovery marker: {e}"))?;
+    let result = (|| {
+        file.write_all(
+            &serde_json::to_vec(&DeadBridgeObservation {
+                identity: identity.clone(),
+                first_seen_millis: now_millis,
+            })
+            .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        fs::rename(&temp, &marker).map_err(|e| e.to_string())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    result.map(|()| false)
+}
+
+pub fn clear_dead_bridge_observation(
+    config_path: &Path,
+    config: &Config,
+    w: &Workspace,
+) -> Result<(), String> {
+    let marker = dead_bridge_path(config_path, config, w);
+    match fs::symlink_metadata(&marker) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("inspect recovery marker: {e}")),
+        Ok(_) if !durable_receipt_is_safe(&marker) => {
+            Err("unsafe automatic recovery marker".into())
+        }
+        Ok(_) => fs::remove_file(marker).map_err(|e| format!("clear recovery marker: {e}")),
+    }
 }
 fn receipt_path(config_path: &Path, config: &Config, workspace: &Workspace) -> PathBuf {
     if let Some(directory) = generated_state_directory(config_path, config) {
@@ -648,6 +766,154 @@ mod tests {
         unsafe { libc::geteuid() == 0 }
     }
     #[test]
+    fn stale_nfs_bridges_are_matched_by_their_subcommand() {
+        let temp = tempfile::tempdir().unwrap();
+        let program = temp.path().join("rws");
+        fs::write(&program, "#!/bin/sh\nwhile :; do sleep 1; done\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+        let mount = temp.path().join("mnt");
+        // Through /bin/sh for the same ETXTBSY reason as the SSHFS test.
+        let spawn = |subcommand: &str| {
+            std::process::Command::new("/bin/sh")
+                .arg(&program)
+                .args([subcommand, "dev@host:/srv/data"])
+                .arg(&mount)
+                .spawn()
+                .unwrap()
+        };
+        let mut bridge = spawn(NFS_BRIDGE_COMMAND);
+        let mut other = spawn("exec");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let ended = terminate_stale_servers(
+            &program,
+            "dev@host:/srv/data",
+            &mount,
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(ended, 1);
+        assert!(bridge.try_wait().unwrap().is_some());
+        assert!(other.try_wait().unwrap().is_none());
+        let _ = other.kill();
+        let _ = other.wait();
+        let _ = bridge.wait();
+    }
+
+    #[test]
+    fn matches_installed_bridge_paths_with_spaces_without_near_misses() {
+        let program = Path::new("/Users/seb/Library/Application Support/RWS/bin/rws");
+        let root = Path::new("/Users/seb/RWS/ssime-omarchy");
+        let source = "ssime@ssime-omarchy:/home/ssime/Documents/project";
+        let exact = format!(
+            "{} nfs-bridge {source} {} --export ssime-omarchy",
+            program.display(),
+            root.display()
+        );
+        assert!(server_command_matches(&exact, program, source, root));
+        assert!(server_command_matches(
+            &format!("/bin/sh {exact}"),
+            program,
+            source,
+            root
+        ));
+        assert!(!server_command_matches(
+            &exact.replace("nfs-bridge", "exec"),
+            program,
+            source,
+            root
+        ));
+        assert!(!server_command_matches(
+            &exact.replace("ssime-omarchy --export", "razer-1 --export"),
+            program,
+            source,
+            root
+        ));
+    }
+
+    #[test]
+    fn dead_bridge_requires_two_spaced_observations_of_the_same_mount() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let config = Config {
+            version: 1,
+            workspaces: vec![],
+            mount: MountOptions::default(),
+            mount_intent: Default::default(),
+            mount_state_generation: None,
+        };
+        let workspace = Workspace {
+            name: "demo".into(),
+            host: "host".into(),
+            remote_root: "/srv/project".into(),
+            mount_root: temp.path().join("mnt"),
+        };
+        let first = MountIdentity {
+            source: "127.0.0.1:/demo".into(),
+            filesystem: "nfs".into(),
+            id: vec![1],
+        };
+        let start = UNIX_EPOCH + Duration::from_secs(1000);
+        assert!(!observe_dead_bridge_at(&path, &config, &workspace, &first, start).unwrap());
+        assert!(
+            !observe_dead_bridge_at(
+                &path,
+                &config,
+                &workspace,
+                &first,
+                start + Duration::from_secs(29)
+            )
+            .unwrap()
+        );
+        assert!(
+            observe_dead_bridge_at(
+                &path,
+                &config,
+                &workspace,
+                &first,
+                start + Duration::from_secs(30)
+            )
+            .unwrap()
+        );
+        let second = MountIdentity {
+            id: vec![2],
+            ..first.clone()
+        };
+        assert!(
+            !observe_dead_bridge_at(
+                &path,
+                &config,
+                &workspace,
+                &second,
+                start + Duration::from_secs(31)
+            )
+            .unwrap()
+        );
+        assert!(
+            !observe_dead_bridge_at(
+                &path,
+                &config,
+                &workspace,
+                &first,
+                start + Duration::from_secs(32)
+            )
+            .unwrap()
+        );
+        clear_dead_bridge_observation(&path, &config, &workspace).unwrap();
+        assert!(
+            !observe_dead_bridge_at(
+                &path,
+                &config,
+                &workspace,
+                &first,
+                start + Duration::from_secs(100)
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
     fn stale_servers_are_matched_exactly_and_terminated() {
         let temp = tempfile::tempdir().unwrap();
         let program = temp.path().join("sshfs");
@@ -656,8 +922,12 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
         let mount = temp.path().join("mnt");
+        // Run the script through /bin/sh rather than executing the file just
+        // written: on Linux, a fork in a parallel test can briefly hold the
+        // write descriptor and make exec fail with ETXTBSY.
         let spawn = |source: &str, root: &Path| {
-            std::process::Command::new(&program)
+            std::process::Command::new("/bin/sh")
+                .arg(&program)
                 .arg(source)
                 .arg(root)
                 .args(["-o", "options"])

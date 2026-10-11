@@ -18,16 +18,20 @@ struct Workspace: Codable, Identifiable, Hashable {
 struct MountOptions: Codable {
     var sshfs: String?
     var fskit: Bool = false
+    /// RWS's built-in localhost NFS bridge: no macFUSE or SSHFS required.
+    var nfs: Bool = false
 
-    init(sshfs: String? = nil, fskit: Bool = false) {
+    init(sshfs: String? = nil, fskit: Bool = false, nfs: Bool = false) {
         self.sshfs = sshfs
         self.fskit = fskit
+        self.nfs = nfs
     }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         sshfs = try values.decodeIfPresent(String.self, forKey: .sshfs)
         fskit = try values.decodeIfPresent(Bool.self, forKey: .fskit) ?? false
+        nfs = try values.decodeIfPresent(Bool.self, forKey: .nfs) ?? false
     }
 }
 
@@ -71,7 +75,7 @@ struct AppConfiguration: Codable {
               Set(dictionary.keys).isSubset(of: ["version", "workspaces", "mount", "mount_state_generation", "mount_intent"]),
               let workspaces = dictionary["workspaces"] as? [[String: Any]],
               workspaces.allSatisfy({ Set($0.keys).isSubset(of: ["name", "host", "remote_root", "mount_root"]) }),
-              dictionary["mount"].map({ ($0 as? [String: Any]).map { Set($0.keys).isSubset(of: ["sshfs", "fskit"]) } ?? false }) ?? true
+              dictionary["mount"].map({ ($0 as? [String: Any]).map { Set($0.keys).isSubset(of: ["sshfs", "fskit", "nfs"]) } ?? false }) ?? true
         else { throw ConfigurationError.invalidShape }
         let decoded = try JSONDecoder().decode(Self.self, from: data)
         guard decoded.version == 1 else { throw ConfigurationError.unsupportedVersion }
@@ -129,8 +133,11 @@ struct CLICommand: Equatable {
         Self(arguments: prefix(config) + ["status"] + (workspace.map { [$0] } ?? []) + ["--no-probe"])
     }
 
-    static func settings(config: URL, sshfs: String, fskit: Bool) -> Self {
-        Self(arguments: prefix(config) + ["settings", "--sshfs", sshfs, "--backend", fskit ? "fskit" : "default"])
+    static func settings(config: URL, sshfs: String, fskit: Bool, nfs: Bool = false) -> Self {
+        // The NFS bridge needs no SSHFS; never send an empty path the CLI would reject.
+        let sshfsArguments = nfs && sshfs.isEmpty ? [] : ["--sshfs", sshfs]
+        let backend = nfs ? "nfs" : fskit ? "fskit" : "default"
+        return Self(arguments: prefix(config) + ["settings"] + sshfsArguments + ["--backend", backend])
     }
 
     static func list(config: URL) -> Self {

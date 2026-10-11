@@ -140,6 +140,12 @@ final class AppModel: ObservableObject {
     private func checkPrerequisites() async {
         prerequisitesReady = false
         detectedSSHFS = nil
+        // The NFS bridge is built into the RWS CLI: macFUSE and SSHFS are not needed.
+        if configuration.mount.nfs {
+            prerequisiteProblem = nil
+            prerequisitesReady = true
+            return
+        }
         let fm = FileManager.default
         let fusePresent = fm.fileExists(atPath: "/Library/Filesystems/macfuse.fs/Contents/Info.plist")
             && fm.fileExists(atPath: "/usr/local/lib/libfuse3.4.dylib")
@@ -233,7 +239,7 @@ final class AppModel: ObservableObject {
     }
 
     func saveSettings(sshfs: String, fskit: Bool) async {
-        await perform(.settings(config: configurationURL, sshfs: sshfs, fskit: fskit))
+        await perform(.settings(config: configurationURL, sshfs: sshfs, fskit: fskit, nfs: configuration.mount.nfs))
         load()
         await recheckStartup()
     }

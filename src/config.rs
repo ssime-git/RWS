@@ -36,6 +36,10 @@ pub struct MountOptions {
     pub sshfs: Option<String>,
     #[serde(default)]
     pub fskit: bool,
+    /// Serve mounts through RWS's own localhost NFS bridge instead of SSHFS:
+    /// no macFUSE, no privileges, mount points outside `/Volumes`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nfs: bool,
 }
 impl Config {
     pub fn load(path: &Path) -> Result<Self, String> {
@@ -114,6 +118,27 @@ impl Config {
             Ok(())
         })
     }
+    /// Change where a workspace mounts. The caller must ensure it is not
+    /// mounted; overlap rules are the same as for registration.
+    pub fn relocate(path: &Path, name: &str, mount_root: PathBuf) -> Result<(), String> {
+        Self::update(path, |config| {
+            let index = config
+                .workspaces
+                .iter()
+                .position(|w| w.name == name)
+                .ok_or_else(|| format!("unknown workspace: {name}"))?;
+            let mut moved = config.workspaces[index].clone();
+            moved.mount_root = mount_root;
+            moved.validate()?;
+            for (i, other) in config.workspaces.iter().enumerate() {
+                if i != index {
+                    check_pair(&moved, other)?;
+                }
+            }
+            config.workspaces[index] = moved;
+            Ok(())
+        })
+    }
     pub fn mount_intent(&self, name: &str) -> MountIntent {
         self.mount_intent.get(name).copied().unwrap_or_default()
     }
@@ -178,6 +203,9 @@ fn validate_mount_state_generation(generation: &str) -> Result<(), String> {
 }
 impl MountOptions {
     fn validate(&self) -> Result<(), String> {
+        if self.nfs && self.fskit {
+            return Err("choose one mount backend: nfs and fskit are exclusive".into());
+        }
         if self
             .sshfs
             .as_ref()
@@ -246,6 +274,36 @@ mod tests {
         let before = fs::read(&path).unwrap();
         assert!(Config::set_mount_intent(&path, "unknown", MountIntent::Connected).is_err());
         assert_eq!(fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn nfs_backend_is_optional_exclusive_and_omitted_when_off() {
+        let config =
+            Config::parse(br#"{"version":1,"workspaces":[],"mount":{"fskit":true}}"#).unwrap();
+        assert!(!config.mount.nfs);
+        assert!(!serde_json::to_string(&config).unwrap().contains("nfs"));
+        let nfs = Config::parse(br#"{"version":1,"workspaces":[],"mount":{"nfs":true}}"#).unwrap();
+        assert!(nfs.mount.nfs);
+        assert!(
+            Config::parse(br#"{"version":1,"workspaces":[],"mount":{"nfs":true,"fskit":true}}"#)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn relocate_changes_only_the_mount_root_and_rejects_overlap() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let a = temp.path().join("a");
+        let b = temp.path().join("b");
+        fs::write(&path, format!(r#"{{"version":1,"workspaces":[{{"name":"one","host":"h","remote_root":"/r","mount_root":"{}"}},{{"name":"two","host":"h","remote_root":"/r","mount_root":"{}"}}]}}"#, a.display(), b.display())).unwrap();
+        let moved = temp.path().join("RWS/one");
+        Config::relocate(&path, "one", moved.clone()).unwrap();
+        let config = Config::load(&path).unwrap();
+        assert_eq!(config.find("one").unwrap().mount_root, moved);
+        assert_eq!(config.find("one").unwrap().remote_root, "/r");
+        assert!(Config::relocate(&path, "two", moved.join("inner")).is_err());
+        assert!(Config::relocate(&path, "missing", temp.path().join("x")).is_err());
     }
 
     #[test]

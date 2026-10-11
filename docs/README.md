@@ -14,6 +14,7 @@ implementation; the feature backlog describes the desired product, not shipped b
 | [Finder behavior](finder-macos.md) | Favorites, remounts, manual pinning and file checks |
 | [CLI reference and quick start](prototype.md) | Register, connect, exec, shell and agents |
 | [Connection and Delta](connection.md) | Receipts, shortcuts, current instruction-based forwarding |
+| [NFS bridge backend](nfs-bridge.md) | Mount without macFUSE or privileges; behavior and limits |
 
 ## Build and understand
 

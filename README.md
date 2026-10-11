@@ -23,6 +23,7 @@ where the files live and where explicitly launched commands execute.
 | Compile, test and run the app yourself | [Developer quick start](docs/development.md) |
 | Use only the command line | [CLI guide](docs/prototype.md) |
 | Keep configured mounts across macOS restarts | [Persistent mounts](docs/install.md#durable-macos-installation) |
+| Mount without macFUSE or admin rights | [NFS bridge backend](docs/nfs-bridge.md) |
 | Understand which processes run where | [Conceptual architecture](docs/architecture.md) |
 | Fix a connection, mounting or Finder problem | [Troubleshooting](docs/troubleshooting.md) |
 
@@ -30,15 +31,16 @@ where the files live and where explicitly launched commands execute.
 
 ```mermaid
 flowchart LR
-    Finder["Finder / editor on Mac"] -->|"File access"| Mount["macFUSE + SSHFS"]
+    Finder["Finder / editor on Mac"] -->|"File access"| Mount["RWS NFS bridge, or macFUSE + SSHFS"]
     Mount -->|"SFTP"| Files["Project files on VM"]
     App["RWS app / CLI"] -->|"Explicit remote launch"| SSH["SSH"]
     SSH --> Agent["Shell / agent / tools on VM"]
 ```
 
-**Files and execution are separate paths.** macFUSE handles filesystem operations;
-it does not redirect arbitrary Mac processes. A normal terminal opened inside
-`/Volumes/RWS-demo` still runs locally. Use **Lancer sur la VM** in the app, or
+**Files and execution are separate paths.** The mount backend handles filesystem
+operations: RWS's own [localhost NFS bridge](docs/nfs-bridge.md), which needs no
+macFUSE or privileges, or macFUSE with SSHFS. Neither redirects arbitrary Mac
+processes: a normal terminal opened inside a mounted workspace still runs locally. Use **Lancer sur la VM** in the app, or
 `rws agent`, `rws exec` or `rws shell`, for remote execution today.
 
 The original product goal is broader: working in a mounted project should run its
