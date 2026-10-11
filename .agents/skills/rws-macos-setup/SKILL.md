@@ -1,13 +1,15 @@
 ---
 name: rws-macos-setup
-description: Use when an agent needs to install, configure, validate, or troubleshoot the RWS prototype on a new Mac, including Rust, SSHFS/macFUSE, FSKit activation, and an authorized remote test workspace.
+description: Use when an agent needs to install, configure, validate, or troubleshoot the RWS prototype on a new Mac, including Rust, the built-in NFS bridge mount backend (no macFUSE), the legacy SSHFS/macFUSE/FSKit backend, and an authorized remote test workspace.
 ---
 
 # RWS setup on a new Mac
 
 Bring a fresh Mac to a verified remote-workspace workflow. Record separate results for build, SSH execution, filesystem mount, Finder edits, and unmount. Passing unit tests or `rws doctor` does not prove mounting works.
 
-Read the checkout's `docs/prototype.md` and `docs/validation.md` before starting. This skill is stored three directories below the repository root. Do not depend on another machine's `.rws-local`, temporary Rust installation, account names, SSH keys, or cached package downloads. The current corrected path has passed a real RWS mount/file-operation/unmount cycle on one Mac using an experimental SSHFS build. Full editor and recovery acceptance is still pending. Use the validation record, not assumptions of prior success.
+**Default mount backend: the built-in NFS bridge.** `rws connect` starts `rws nfs-bridge`, a localhost-only NFSv3 server that forwards to the remote host over the system `ssh -s HOST sftp`; macOS mounts it with its own NFS client. It needs no macFUSE, no SSHFS, no remote install and no sudo. Mount points must be user-owned (`~/RWS/NAME`), never under `/Volumes`. Read `docs/nfs-bridge.md`. macFUSE/SSHFS (sections 2b and 5) is a legacy backend: install it only when the user explicitly asks for it.
+
+Read the checkout's `docs/prototype.md`, `docs/nfs-bridge.md` and `docs/validation.md` before starting. This skill is stored three directories below the repository root. Do not depend on another machine's `.rws-local`, temporary Rust installation, account names, SSH keys, or cached package downloads. The current corrected path has passed a real RWS mount/file-operation/unmount cycle on one Mac using an experimental SSHFS build. Full editor and recovery acceptance is still pending. Use the validation record, not assumptions of prior success.
 
 ## Inputs and evidence
 
@@ -36,9 +38,21 @@ Install missing rustfmt/clippy components through rustup. No fixed historical te
 
 ## 2. SSH and mount dependencies
 
-Test the selected host with system OpenSSH and SFTP. Preserve its existing host-key policy and authentication; let the user handle first-connection trust or login prompts. Do not copy credentials or install a remote service. Tailscale is optional. The current command wrapper assumes a POSIX-compatible remote login shell.
+Test the selected host with system OpenSSH and SFTP. Preserve its existing host-key policy and authentication; let the user handle first-connection trust or login prompts. Do not copy credentials or install a remote service. Tailscale is optional. The current command wrapper assumes a POSIX-compatible remote login shell. Mounts and the LaunchAgent use `BatchMode=yes`: the key must work without an interactive prompt (agent or unencrypted key, as the user prefers).
 
-For mounting, obtain compatible macFUSE and SSHFS packages from https://macfuse.github.io/ and its official linked releases. These are **two separate installations**. Verify official checksums when supplied and package signing/notarization before installation. Follow installer prompts; user authentication and license acceptance may require handoff.
+### 2a. NFS bridge (default)
+
+Nothing else to install. Select it and keep mount points in the user's home:
+
+```sh
+./target/debug/rws --config .rws-local/setup.json settings --backend nfs
+```
+
+The remote server must be OpenSSH's `sftp-server` (atomic saves use `posix-rename@openssh.com`). `rws doctor` reports `sshfs` as not required. If a workspace was registered under `/Volumes`, `rws workspace relocate NAME` moves it to `~/RWS/NAME`; `connect` refuses `/Volumes` with this backend because macOS deletes such mount points at unmount and recreating them needs root.
+
+### 2b. Legacy SSHFS backend (only on explicit request)
+
+For this backend, obtain compatible macFUSE and SSHFS packages from https://macfuse.github.io/ and its official linked releases. These are **two separate installations**. Verify official checksums when supplied and package signing/notarization before installation. Follow installer prompts; user authentication and license acceptance may require handoff.
 
 Check `sshfs --version` actually runs. A file present on PATH is insufficient: `Library not loaded: libfuse3.4.dylib` or missing MFMount indicates an incomplete/broken macFUSE installation. Package receipts help distinguish installed SSHFS from missing macFUSE. Resolve executable PATH differences without writing global shell configuration unnecessarily.
 
@@ -48,13 +62,13 @@ For the diagnosed macOS 27/macFUSE 5.4/SSHFS 3.7.5 combination, follow `docs/ssh
 
 ## 3. Isolated workspace
 
-Select a unique workspace name and unused `/Volumes/RWS-...` path. Use an empty, dedicated remote directory; with user authorization, `mktemp -d /tmp/rws-test.XXXXXX` on the remote host can provide one. Record its exact returned path. Do not use a remote home directory or valuable project for write/failure tests.
+Select a unique workspace name and an unused mount path (`~/RWS/NAME` for NFS). Use an empty, dedicated remote directory; with user authorization, `mktemp -d /tmp/rws-test.XXXXXX` on the remote host can provide one. Record its exact returned path. Do not use a remote home directory or valuable project for write/failure tests.
 
-Use the following example only after replacing the example host and path with the selected values:
+Use the following example only after replacing the example host and path with the selected values. With the NFS backend, the mount point is a user-owned directory such as `~/RWS/setup-test`; with the legacy FSKit backend it is an unused `/Volumes/RWS-...` path.
 
 ```sh
 ./target/debug/rws --config .rws-local/setup.json workspace add setup-test \
-  --ssh user@devbox --remote /tmp/rws-test.EXAMPLE --mount /Volumes/RWS-setup-test
+  --ssh user@devbox --remote /tmp/rws-test.EXAMPLE --mount "$HOME/RWS/setup-test"
 ./target/debug/rws --config .rws-local/setup.json doctor --workspace setup-test
 ./target/debug/rws --config .rws-local/setup.json exec --workspace setup-test -- pwd
 ./target/debug/rws --config .rws-local/setup.json shell --workspace setup-test
@@ -63,6 +77,27 @@ Use the following example only after replacing the example host and path with th
 The interactive shell runs remotely and uses the remote `$SHELL`; the terminal window remains local. Exit that session before issuing subsequent local commands. Verify literal arguments and a known nonzero exit status, not just connection success. In the interactive session, verify Ctrl+C interrupts a disposable foreground command and terminal resizing reaches the remote PTY; record either as unverified if the available tools cannot exercise it.
 
 ## 4. Mount acceptance
+
+### NFS bridge
+
+```sh
+./target/debug/rws --config .rws-local/setup.json connect setup-test --dry-run
+./target/debug/rws --config .rws-local/setup.json connect setup-test
+mount | grep 127.0.0.1                      # 127.0.0.1:/setup-test on ~/RWS/setup-test (nfs)
+open "$HOME/RWS/setup-test"
+```
+
+`--dry-run` must show `rws nfs-bridge USER@HOST:REMOTE MOUNT --export NAME`. Run the file checks below plus these bridge-specific ones, each verified independently over SSH:
+
+- Remote atomic replace (`mv tmp file` on the host) is visible on the Mac within about two seconds.
+- No `._*` file appears remotely after writing a file with extended attributes (`xattr -w`).
+- Kill only the bridge's `ssh` child (`pgrep -P <bridge pid> ssh`), then read a never-read file: it must succeed without an application-visible error. Read uncached files, otherwise the kernel cache hides the test.
+- Kill the bridge itself: operations fail within about 8 seconds and `umount -f` works without sudo; no `mount_nfs`/`umount` process remains.
+- `rws disconnect` makes the bridge exit by itself; an external `diskutil unmount` with intent `connected` is remounted by the LaunchAgent within about 30 seconds.
+
+A `connect` or `disconnect` blocked by `Resource busy` means files are open; never force it on the user's real workspaces. A failed `disconnect` still records the pause, so run `connect` again to restore the `connected` intent.
+
+### Legacy FSKit backend
 
 ```sh
 ./target/debug/rws --config .rws-local/setup.json mount setup-test --fskit --dry-run
@@ -74,17 +109,19 @@ macFUSE creates the FSKit mount point; do not create it with sudo or relax `/Vol
 
 Create a uniquely named text file through the mount, read it independently using `rws exec`, test rename and replace of a disposable file, edit/save it in a local editor, and confirm the new contents remotely. Basic writes do not validate editors that save using atomic rename. If rename fails, reproduce with direct SSHFS on the same isolated directory to separate the RWS wrapper from the filesystem stack; record the failure rather than hiding it with copy/delete. Test a nested-directory command using an absolute path to the built RWS binary and an absolute `--config` path after changing directory. Verify remote changes become visible locally, recording observed delays. Keep failures separate from successes.
 
-For the current FSKit route, use the `3.7.5-rws-fskit3` build: conversion mode requires valid UTF-8 NFC remote child names. Read the Unicode contract in `docs/sshfs-fskit.md`; `--raw-names` is an explicit opt-out, not a Finder compatibility fix. Test exclusive creation, read, rename, replacement and symlinks with accents and supplementary-plane emoji. Exercise NFC/NFD aliases in both directions: create, read through the other form, update length, stat through the original form, delete through the other form, and confirm absence. Compare saved bytes independently over SSH. Conversion mode disables metadata caches at the cost of additional remote requests.
+For the legacy FSKit route, use the `3.7.5-rws-fskit3` build (the NFS bridge composes names to NFC itself and needs no build): conversion mode requires valid UTF-8 NFC remote child names. Read the Unicode contract in `docs/sshfs-fskit.md`; `--raw-names` is an explicit opt-out, not a Finder compatibility fix. Test exclusive creation, read, rename, replacement and symlinks with accents and supplementary-plane emoji. Exercise NFC/NFD aliases in both directions: create, read through the other form, update length, stat through the original form, delete through the other form, and confirm absence. Compare saved bytes independently over SSH. Conversion mode disables metadata caches at the cost of additional remote requests.
 
-Run `python3 scripts/test-mount-listing.py /Volumes/RWS-setup-test` on the authorized mounted root; repeated root listings after create/delete must remain accurate. This test creates a unique disposable directory and retains it on failure. Earlier builds returned an empty root after the first enumeration despite successful remote mkdir.
+Run `python3 scripts/test-mount-listing.py MOUNT` (for example `~/RWS/setup-test`) on the authorized mounted root; repeated root listings after create/delete must remain accurate. This test creates a unique disposable directory and retains it on failure. Earlier builds returned an empty root after the first enumeration despite successful remote mkdir.
 
 ### Finder settings and the left sidebar
 
 Read `docs/finder-macos.md` for the complete procedure and symptom table. In Finder > Settings > Sidebar, inspect Connected servers, External disks and Hard disks under Locations; record prior states, including mixed checkboxes. With existing user authorization or approval for these preference changes, enable the requested categories. This can expose other volumes in the sidebar. These are display settings, not a reason to grant Full Disk Access or change FSKit activation.
 
-On the tested Mac, enabling the disk categories was insufficient. Go > Computer (⇧⌘C), select `RWS-WORKSPACE`, then File > Add to Sidebar placed the current volume under Locations with an eject button. If the sidebar is hidden, show it from View; expand Locations if collapsed. RWS does not configure Finder automatically and must not present the remote mount as local just to force appearance.
+With the NFS bridge, the mount is a folder in the home directory: drag `~/RWS/NAME` to Favorites. Moving from FSKit leaves favorites, editor recents and Delta projects pointing at `/Volumes/RWS-*`; tell the user to re-add them from `~/RWS/...`.
 
-After remount, the entry may disappear or remain stale. If clicking it reports that the original item cannot be found, first open the actual `/Volumes/RWS-...` path with ⇧⌘G. If that works, remove only the stale sidebar shortcut through its context menu and add the current volume from Computer again. Removing a shortcut is different from ejecting a volume. Automatic sidebar persistence remains unresolved.
+With the legacy FSKit backend: On the tested Mac, enabling the disk categories was insufficient. Go > Computer (⇧⌘C), select `RWS-WORKSPACE`, then File > Add to Sidebar placed the current volume under Locations with an eject button. If the sidebar is hidden, show it from View; expand Locations if collapsed. RWS does not configure Finder automatically and must not present the remote mount as local just to force appearance.
+
+After remount, the entry may disappear or remain stale. If clicking it reports that the original item cannot be found, first open the actual mount path (`~/RWS/...`, or `/Volumes/RWS-...` with FSKit) with ⇧⌘G. If that works, remove only the stale sidebar shortcut through its context menu and add the current volume from Computer again. Removing a shortcut is different from ejecting a volume. Automatic sidebar persistence remains unresolved.
 
 Validate by actually clicking the sidebar entry, repeatedly leaving/reopening the root, creating a unique folder with ⇧⌘N, and copying a test file through Finder. Independently verify the directory and file bytes remotely. Finder has no generic New File command; use an editor Save dialog or copy/paste. Copy/paste success does not validate editor save patterns. Capture the resulting root view, not only the icon. If changes made outside Finder are missing, reopen the directory and record refresh behavior rather than claiming live notifications.
 
@@ -92,7 +129,10 @@ If a diagnostic crashes and OS I/O or unmount processes remain blocked, record t
 
 Close test files, leave the mounted directory, and run `rws unmount setup-test`. Verify the volume is absent and the remote data still exists. Clean up only the exact disposable files/directory created during this run. For a continuing demo, explicitly record any retained mount or test directory.
 
-## 5. FSKit activation failures
+## 5. FSKit activation failures (legacy backend only)
+
+Hung FSKit mounts (many `/sbin/mount -t macfuse` processes that never exit, every SSHFS mount timing out) are a reason to propose the NFS bridge rather than repairing FSKit. Switching an existing durable setup, in this order: `rws install` with the new binary first (an older RWS rejects the `nfs` key and would break the LaunchAgent and zsh hook), then `rws settings --backend nfs`, `rws workspace relocate NAME` for each workspace, `rws connect NAME`. Uninstalling macFUSE afterwards needs the user's sudo: run its official `uninstall_macfuse.sh` from a copy (it deletes its own bundle), then remove the preference pane and `/usr/local/bin/sshfs`, which it leaves behind. Let the user type the password. The stuck processes disappear at the next restart.
+
 
 If switches stay off, first verify registration of `io.macfuse.app.fsmodule.macfuse` and `io.macfuse.app.fsmodule.macfuse-local` with `pluginkit -m -A -D -i ID`. Registration is not enablement. Consult current upstream information, including https://github.com/macfuse/macfuse/issues/1194; it is a community report, not an Apple-supported repair procedure.
 
@@ -154,7 +194,7 @@ simulating it in a non-TTY shell.
 
 ## Completion record
 
-Report: versions; build/test result; SSH/shell result; mount/edit/unmount result;
+Report: mount backend (NFS bridge or legacy SSHFS); versions; build/test result; SSH/shell result; mount/edit/unmount result;
 zsh-hook installation and real-terminal result; Delta-rules installation and
 Delta-terminal result; screenshot locations; retained test data;
 temporary-permission final state; unresolved OS blockers. Continue useful

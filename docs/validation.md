@@ -640,3 +640,21 @@ The full Rust suite passed locally (154 tests), as did formatting and Clippy
 with warnings denied. This validates recovery after a dead bridge
 on an isolated volume. Recovery after reboot or sleep, live-bridge SSH outages,
 and production rollout remain unverified.
+
+## Restart without macFUSE (NFS bridge) — 2026-10-11
+
+macFUSE and the official SSHFS package were uninstalled with macFUSE's own
+uninstaller. The preference pane and `/usr/local/bin/sshfs`, which that
+uninstaller leaves behind, were removed separately. Its `launchctl bootout`
+step reported an I/O error, but the service definition was removed and was no
+longer known to launchd.
+
+The user then restarted the Mac and reported that both workspaces worked. After
+the restart:
+
+- Both NFS bridges ran with low process ids, which shows they were started at
+  login by the `io.rws.mounts` LaunchAgent.
+- `~/RWS/razer-1` and `~/RWS/ssime-omarchy` were mounted.
+- No macFUSE or FSKit mount process remained, including the 63 hung ones.
+
+Finder interaction was exercised by the user and not recorded in detail here.
