@@ -658,3 +658,17 @@ the restart:
 - No macFUSE or FSKit mount process remained, including the 63 hung ones.
 
 Finder interaction was exercised by the user and not recorded in detail here.
+
+## zsh switch inside NFS mounts — 2026-10-11
+
+The zsh auto-shell hook only triggered under `/Volumes`, so it never fired in
+`~/RWS/NAME` mounts. It now reads the registered mount roots when the shell
+starts. A test covers this: a root outside any prefix switches once in a
+nested directory, while a sibling directory sharing the root's name prefix
+stays local.
+
+Live check with the durable binary and the user's `~/.zshrc`: in a new
+terminal tab, `RWS_AUTO_MODE=remote; cd ~/RWS/razer-1/DocuCoachAI` printed
+`RWS remote shell: razer@razer-1:/home/razer/Projects/DocuCoachAI` and showed
+the remote prompt. The interactive `[Y/n]` prompt in that tab was not
+exercised.

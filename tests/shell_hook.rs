@@ -96,7 +96,7 @@ fn entering_a_remote_directory_switches_into_rws_shell_once() {
     let deeper = volume.join("sub");
     std::fs::create_dir_all(&deeper).unwrap();
     let bin = write_fake_rws(temp.path(), r#"{"mode":"remote","workspace":"demo"}"#, 0);
-    let snippet = rws::shell_hook::zsh_snippet(&bin, None).unwrap();
+    let snippet = rws::shell_hook::zsh_snippet(&bin, None, &[]).unwrap();
     let body = format!(
         "cd '{v}'\n_rws_auto_shell\ncd '{d}'\n_rws_auto_shell\n",
         v = volume.display(),
@@ -123,7 +123,7 @@ fn leaving_and_reentering_the_volume_switches_again() {
     let outside = temp.path().join("elsewhere");
     std::fs::create_dir_all(&outside).unwrap();
     let bin = write_fake_rws(temp.path(), r#"{"mode":"remote","workspace":"demo"}"#, 0);
-    let snippet = rws::shell_hook::zsh_snippet(&bin, None).unwrap();
+    let snippet = rws::shell_hook::zsh_snippet(&bin, None, &[]).unwrap();
     let body = format!(
         "cd '{v}'\n_rws_auto_shell\ncd /\n_rws_auto_shell\ncd '{v}'\n_rws_auto_shell\n",
         v = volume.display()
@@ -140,7 +140,7 @@ fn local_mode_and_opt_out_do_not_switch() {
     let volume = temp.path().join("plain");
     std::fs::create_dir_all(&volume).unwrap();
     let bin = write_fake_rws(temp.path(), r#"{"mode":"local"}"#, 0);
-    let snippet = rws::shell_hook::zsh_snippet(&bin, None).unwrap();
+    let snippet = rws::shell_hook::zsh_snippet(&bin, None, &[]).unwrap();
     let body = format!("cd '{v}'\n_rws_auto_shell\n", v = volume.display());
     let out = run_zsh(&snippet, temp.path(), &body);
     assert!(!String::from_utf8_lossy(&out.stdout).contains("SHELL-ENTERED"));
@@ -150,7 +150,7 @@ fn local_mode_and_opt_out_do_not_switch() {
     let volume2 = temp2.path().join("RWS-demo");
     std::fs::create_dir_all(&volume2).unwrap();
     let bin2 = write_fake_rws(temp2.path(), r#"{"mode":"remote","workspace":"demo"}"#, 0);
-    let snippet2 = rws::shell_hook::zsh_snippet(&bin2, None).unwrap();
+    let snippet2 = rws::shell_hook::zsh_snippet(&bin2, None, &[]).unwrap();
     let script = format!(
         "emulate -L zsh\n{snippet2}\ncd '{v}'\n_rws_auto_shell\n",
         v = volume2.display()
@@ -173,7 +173,7 @@ fn context_failure_reports_once_and_suppresses_retries() {
     let deeper = volume.join("sub");
     std::fs::create_dir_all(&deeper).unwrap();
     let bin = write_fake_rws(temp.path(), "", 1);
-    let snippet = rws::shell_hook::zsh_snippet(&bin, None).unwrap();
+    let snippet = rws::shell_hook::zsh_snippet(&bin, None, &[]).unwrap();
     let body = format!(
         "cd '{v}'\n_rws_auto_shell\ncd '{d}'\n_rws_auto_shell\n",
         v = volume.display(),
@@ -191,7 +191,7 @@ fn sourcing_the_snippet_inside_a_volume_switches_immediately() {
     let volume = temp.path().join("RWS-demo");
     std::fs::create_dir_all(&volume).unwrap();
     let bin = write_fake_rws(temp.path(), r#"{"mode":"remote","workspace":"demo"}"#, 0);
-    let snippet = rws::shell_hook::zsh_snippet(&bin, None).unwrap();
+    let snippet = rws::shell_hook::zsh_snippet(&bin, None, &[]).unwrap();
     // No manual _rws_auto_shell call: sourcing alone must detect the volume.
     let script = format!(
         "emulate -L zsh\ncd '{v}'\n{snippet}\n",
@@ -214,7 +214,7 @@ fn rws_config_environment_variable_is_forwarded_to_context_and_shell() {
     let volume = temp.path().join("RWS-demo");
     std::fs::create_dir_all(&volume).unwrap();
     let bin = write_fake_rws(temp.path(), r#"{"mode":"remote","workspace":"demo"}"#, 0);
-    let snippet = rws::shell_hook::zsh_snippet(&bin, None).unwrap();
+    let snippet = rws::shell_hook::zsh_snippet(&bin, None, &[]).unwrap();
     let script = format!(
         "emulate -L zsh\n{snippet}\ncd '{v}'\n_rws_auto_shell\n",
         v = volume.display()
@@ -247,7 +247,7 @@ fn baked_config_is_used_and_rws_config_env_overrides_it() {
     std::fs::create_dir_all(&volume).unwrap();
     let bin = write_fake_rws(temp.path(), r#"{"mode":"remote","workspace":"demo"}"#, 0);
     let snippet =
-        rws::shell_hook::zsh_snippet(&bin, Some(std::path::Path::new("/baked/config.json")))
+        rws::shell_hook::zsh_snippet(&bin, Some(std::path::Path::new("/baked/config.json")), &[])
             .unwrap();
     let script = format!(
         "emulate -L zsh\n{snippet}\ncd '{v}'\n_rws_auto_shell\n",
@@ -291,7 +291,7 @@ fn without_tty_or_forced_mode_entry_stays_local_and_silent() {
     let volume = temp.path().join("RWS-demo");
     std::fs::create_dir_all(&volume).unwrap();
     let bin = write_fake_rws(temp.path(), r#"{"mode":"remote","workspace":"demo"}"#, 0);
-    let snippet = rws::shell_hook::zsh_snippet(&bin, None).unwrap();
+    let snippet = rws::shell_hook::zsh_snippet(&bin, None, &[]).unwrap();
     let script = format!(
         "emulate -L zsh\n{snippet}\ncd '{v}'\n_rws_auto_shell\necho STILL-LOCAL\n",
         v = volume.display()
@@ -316,7 +316,7 @@ fn rws_auto_mode_local_prevents_switching_without_a_prompt() {
     let volume = temp.path().join("RWS-demo");
     std::fs::create_dir_all(&volume).unwrap();
     let bin = write_fake_rws(temp.path(), r#"{"mode":"remote","workspace":"demo"}"#, 0);
-    let snippet = rws::shell_hook::zsh_snippet(&bin, None).unwrap();
+    let snippet = rws::shell_hook::zsh_snippet(&bin, None, &[]).unwrap();
     let script = format!(
         "emulate -L zsh\n{snippet}\ncd '{v}'\n_rws_auto_shell\n",
         v = volume.display()
@@ -347,7 +347,7 @@ fn prompt_defaults_to_remote_on_enter() {
         r#"{"host":"dev@server","mode":"remote","workspace":"demo"}"#,
         0,
     );
-    let snippet = rws::shell_hook::zsh_snippet(&bin, None).unwrap();
+    let snippet = rws::shell_hook::zsh_snippet(&bin, None, &[]).unwrap();
     let body = format!("cd '{v}'\n_rws_auto_shell\n", v = volume.display());
     let all = run_zsh_pty(&snippet, temp.path(), &body, "\n");
     assert!(all.contains("switch to dev@server (demo)?"), "{all}");
@@ -364,7 +364,7 @@ fn prompt_answer_n_stays_local_and_is_remembered() {
         r#"{"host":"dev@server","mode":"remote","workspace":"demo"}"#,
         0,
     );
-    let snippet = rws::shell_hook::zsh_snippet(&bin, None).unwrap();
+    let snippet = rws::shell_hook::zsh_snippet(&bin, None, &[]).unwrap();
     // Enter, leave, re-enter: one question, zero switches.
     let body = format!(
         "cd '{v}'\n_rws_auto_shell\ncd /\n_rws_auto_shell\ncd '{v}'\n_rws_auto_shell\necho DONE\n",
@@ -386,7 +386,7 @@ fn remembered_remote_choice_reapplies_on_reentry_without_asking() {
         r#"{"host":"dev@server","mode":"remote","workspace":"demo"}"#,
         0,
     );
-    let snippet = rws::shell_hook::zsh_snippet(&bin, None).unwrap();
+    let snippet = rws::shell_hook::zsh_snippet(&bin, None, &[]).unwrap();
     let body = format!(
         "cd '{v}'\n_rws_auto_shell\ncd /\n_rws_auto_shell\ncd '{v}'\n_rws_auto_shell\n",
         v = volume.display()
@@ -394,4 +394,40 @@ fn remembered_remote_choice_reapplies_on_reentry_without_asking() {
     let all = run_zsh_pty(&snippet, temp.path(), &body, "\n");
     assert_eq!(all.matches("switch to").count(), 1, "{all}");
     assert_eq!(all.matches("SHELL-ENTERED").count(), 2, "{all}");
+}
+
+#[test]
+fn registered_roots_trigger_anywhere_without_a_prefix() {
+    let temp = tempfile::tempdir().unwrap();
+    // Like ~/RWS/NAME for the NFS bridge: not under any common volume prefix.
+    let root = temp.path().join("home/RWS/demo");
+    let deeper = root.join("project/src");
+    let sibling = temp.path().join("home/RWS/demo-notes");
+    std::fs::create_dir_all(&deeper).unwrap();
+    std::fs::create_dir_all(&sibling).unwrap();
+    let bin = write_fake_rws(temp.path(), r#"{"mode":"remote","workspace":"demo"}"#, 0);
+    let snippet = rws::shell_hook::zsh_snippet(&bin, None, &[root.as_path()]).unwrap();
+    let body = format!(
+        "cd '{s}'\n_rws_auto_shell\ncd '{d}'\n_rws_auto_shell\n",
+        s = sibling.display(),
+        d = deeper.display()
+    );
+    let script = format!("emulate -L zsh\nsetopt interactive\n{snippet}\n{body}\n");
+    let out = std::process::Command::new("zsh")
+        .args(["-f", "-c", &script])
+        .env_remove("RWS_AUTO_PREFIX")
+        .env("RWS_AUTO_MODE", "remote")
+        .env_remove("RWS_NO_AUTO_SHELL")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // The sibling sharing the root's name prefix stays local; the nested
+    // directory of the registered root switches exactly once.
+    assert_eq!(stdout.matches("SHELL-ENTERED").count(), 1, "{stdout}");
+    assert!(
+        stdout.contains(&format!("SHELL-ENTERED {}", deeper.display())),
+        "{stdout}"
+    );
+    let log = calls(temp.path());
+    assert_eq!(log.matches("context --cwd").count(), 1, "{log}");
 }

@@ -984,7 +984,12 @@ fn execute_action(
             let baked = explicit_config.then_some(absolute.as_path());
             match action {
                 HookAction::Zsh => {
-                    print!("{}", rws::shell_hook::zsh_snippet(&binary, baked)?);
+                    let roots: Vec<&std::path::Path> = config
+                        .workspaces
+                        .iter()
+                        .map(|w| w.mount_root.as_path())
+                        .collect();
+                    print!("{}", rws::shell_hook::zsh_snippet(&binary, baked, &roots)?);
                     // Guidance only for a manual invocation; stay silent under
                     // eval "$(rws hook zsh)", which runs at every shell start.
                     use std::io::IsTerminal;
