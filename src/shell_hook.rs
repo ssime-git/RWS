@@ -58,8 +58,18 @@ fn quote(label: &str, path: &Path) -> Result<String, String> {
 /// Return a zsh snippet for `eval "$(rws hook zsh)"`. The snippet embeds the
 /// given rws executable path and never falls back to a PATH lookup. A config
 /// path is baked in when given; `RWS_CONFIG` in the environment overrides it.
-pub fn zsh_snippet(rws: &Path, config: Option<&Path>) -> Result<String, String> {
+///
+/// `roots` are the registered mount points, read when the shell starts: the
+/// hook triggers inside any of them, wherever they live (`~/RWS/NAME` for
+/// the NFS bridge, `/Volumes/RWS-NAME` for FSKit). `RWS_AUTO_PREFIX` keeps
+/// the older behavior of treating every child of one directory as a volume.
+pub fn zsh_snippet(rws: &Path, config: Option<&Path>, roots: &[&Path]) -> Result<String, String> {
     let quoted = quote("rws executable", rws)?;
+    let roots = roots
+        .iter()
+        .map(|root| quote("mount root", root))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(" ");
     let config_selection = match config {
         Some(config) => format!(
             "if [[ -n ${{RWS_CONFIG-}} ]]; then\n    rws_cmd+=(--config \"$RWS_CONFIG\")\n  else\n    rws_cmd+=(--config {})\n  fi",
@@ -71,13 +81,26 @@ pub fn zsh_snippet(rws: &Path, config: Option<&Path>) -> Result<String, String> 
         r#"# RWS: switch into the workspace's remote shell when entering its mount.
 _rws_auto_shell() {{
   [[ -n ${{RWS_NO_AUTO_SHELL-}} ]] && return 0
-  local prefix=${{RWS_AUTO_PREFIX:-/Volumes}}
-  if [[ $PWD != $prefix/* ]]; then
+  local volume='' root
+  if [[ -n ${{RWS_AUTO_PREFIX-}} ]]; then
+    if [[ $PWD == $RWS_AUTO_PREFIX/* ]]; then
+      local rest=${{PWD#$RWS_AUTO_PREFIX/}}
+      volume=$RWS_AUTO_PREFIX/${{rest%%/*}}
+    fi
+  else
+    local -a roots
+    roots=({roots})
+    for root in $roots; do
+      if [[ $PWD == "$root" || $PWD == "$root"/* ]]; then
+        volume=$root
+        break
+      fi
+    done
+  fi
+  if [[ -z $volume ]]; then
     unset _RWS_AUTO_SUPPRESS
     return 0
   fi
-  local rest=${{PWD#$prefix/}}
-  local volume=$prefix/${{rest%%/*}}
   if [[ -n ${{_RWS_AUTO_SUPPRESS-}} && ( $PWD == $_RWS_AUTO_SUPPRESS || $PWD == $_RWS_AUTO_SUPPRESS/* ) ]]; then
     return 0
   fi
@@ -125,7 +148,8 @@ fi
 _rws_auto_shell
 "#,
         rws = quoted,
-        config_selection = config_selection
+        config_selection = config_selection,
+        roots = roots
     ))
 }
 
@@ -400,6 +424,7 @@ mod tests {
         let snippet = zsh_snippet(
             Path::new("/opt/rws"),
             Some(Path::new("/home/dev/.rws-local/config.json")),
+            &[],
         )
         .unwrap();
         assert!(snippet.contains("'/home/dev/.rws-local/config.json'"));
@@ -453,7 +478,7 @@ mod tests {
 
     #[test]
     fn snippet_registers_chpwd_hook_and_embeds_quoted_binary() {
-        let snippet = zsh_snippet(Path::new("/opt/my tools/rws"), None).unwrap();
+        let snippet = zsh_snippet(Path::new("/opt/my tools/rws"), None, &[]).unwrap();
         assert!(snippet.contains("chpwd_functions"));
         assert!(snippet.contains("_rws_auto_shell"));
         assert!(snippet.contains("'/opt/my tools/rws'"));
@@ -470,14 +495,36 @@ mod tests {
     }
 
     #[test]
+    fn snippet_triggers_inside_registered_roots_anywhere() {
+        let snippet = zsh_snippet(
+            Path::new("/opt/rws"),
+            None,
+            &[
+                Path::new("/Users/me/RWS/demo"),
+                Path::new("/Users/me/RWS/it's"),
+            ],
+        )
+        .unwrap();
+        assert!(
+            snippet.contains("roots=('/Users/me/RWS/demo' '/Users/me/RWS/it'\\''s')"),
+            "{snippet}"
+        );
+        assert!(snippet.contains(r#"$PWD == "$root"/*"#));
+        // The legacy prefix stays available as an explicit override only.
+        assert!(snippet.contains("RWS_AUTO_PREFIX"));
+        assert!(!snippet.contains("RWS_AUTO_PREFIX:-/Volumes"));
+        assert!(zsh_snippet(Path::new("/opt/rws"), None, &[Path::new("/bad\nroot")]).is_err());
+    }
+
+    #[test]
     fn snippet_escapes_single_quotes_in_binary_path() {
-        let snippet = zsh_snippet(Path::new("/opt/o'brien/rws"), None).unwrap();
+        let snippet = zsh_snippet(Path::new("/opt/o'brien/rws"), None, &[]).unwrap();
         assert!(snippet.contains(r"'/opt/o'\''brien/rws'"));
     }
 
     #[test]
     fn snippet_rejects_paths_with_newlines() {
-        assert!(zsh_snippet(Path::new("/opt/bad\nname/rws"), None).is_err());
-        assert!(zsh_snippet(Path::new("/opt/rws"), Some(Path::new("/cfg\n.json"))).is_err());
+        assert!(zsh_snippet(Path::new("/opt/bad\nname/rws"), None, &[]).is_err());
+        assert!(zsh_snippet(Path::new("/opt/rws"), Some(Path::new("/cfg\n.json")), &[]).is_err());
     }
 }

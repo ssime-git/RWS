@@ -159,6 +159,8 @@ private config:
 /absolute/path/to/rws --config /absolute/path/to/setup.json hook install
 ```
 
+The hook triggers inside the mount roots registered in the configuration when the shell starts, so it works with `~/RWS/NAME` (NFS) as with `/Volumes/RWS-NAME` (FSKit). After `workspace add` or `relocate`, only new terminals see the new root. To check it in a real terminal tab, run `RWS_AUTO_MODE=remote; cd ~/RWS/NAME`: the tab must print `RWS remote shell: HOST:REMOTE_DIR` and show the remote prompt. Piping input through `script(1)` does not exercise this reliably.
+
 `hook install` manages only its marked `# RWS auto-shell hook` line in
 `~/.zshrc` (or `$ZDOTDIR/.zshrc`); it preserves all other content and replaces
 only its own prior line. Do not assume that building RWS, mounting a volume, or

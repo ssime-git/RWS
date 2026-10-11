@@ -62,9 +62,12 @@ volume reapplies it without asking, and a new terminal asks again. Leaving the
 remote shell with `exit` returns to the local zsh; RWS does not switch again
 until you leave the volume and re-enter it. Details:
 
-- Detection calls `rws context --cwd`, so only registered workspaces with a
-  verified mount identity switch; an unregistered `RWS-` volume reports its
-  error once per entry instead of silently running locally.
+- The hook triggers inside the mount roots registered when the shell started
+  (`~/RWS/NAME` with the NFS bridge, `/Volumes/RWS-NAME` with FSKit). A
+  workspace added or relocated later is picked up by new terminals only.
+- Detection then calls `rws context --cwd`, so only registered workspaces with
+  a verified mount identity switch; a failed check reports its error once per
+  entry instead of silently running locally.
 - Scope is interactive zsh only. Scripts, other shells, IDE-internal and
   noninteractive processes are not covered; broader coverage remains
   [#3](https://github.com/ssime-git/RWS/issues/3).
@@ -73,7 +76,9 @@ until you leave the volume and re-enter it. Details:
 - `RWS_AUTO_MODE=remote` or `RWS_AUTO_MODE=local` forces the mode without a
   prompt — the programmatic surface for agents and automation.
 - `RWS_NO_AUTO_SHELL=1` disables the switch for a shell;
-  `RWS_AUTO_PREFIX` overrides the `/Volumes` detection prefix;
+  `RWS_AUTO_PREFIX=/some/dir` replaces the registered roots and treats every
+  child of that directory as a volume (the behavior before mount roots were
+  read from the configuration);
   `RWS_CONFIG` points detection and the shell at a non-default
   configuration file and overrides a baked `--config` path.
 - The snippet embeds the absolute path of the `rws` that printed it; reprint
