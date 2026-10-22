@@ -719,3 +719,38 @@ terminal resize in a human session, and the cutover of the real
 `razer-documents` workspace. macFUSE's runtime was already absent from this Mac
 (only two package receipts and a repository-local SSHFS build remain), so the
 legacy FSKit backend cannot mount until a backend change.
+
+## Cutover of razer-documents to the NFS bridge — 2026-10-22
+
+The real workspace moved from FSKit/SSHFS (macFUSE already absent from this
+Mac) to the NFS bridge. A new production configuration holds only
+`razer-documents` (backend `nfs`, mount `~/RWS/razer-documents`, previously
+`/Volumes/RWS-Documents`); the former configuration was backed up and left as
+an archive. `install` copied the release binary of the app bundle into durable
+state, `autostart install` and `launchctl bootstrap` activated the LaunchAgent,
+and its first pass mounted the volume by itself. `.zshrc` was not touched.
+`rws doctor` reported every check `[ok]`.
+
+- **Real data:** SHA-256 of an existing remote file matched on both sides;
+  in a uniquely named scratch directory (removed afterwards, confirmed absent
+  on the host) create/read, Unicode and emoji names, symlink, executable bit,
+  Mac-to-host write, host-to-Mac atomic replace visible within 3 s, editor-style
+  atomic save and no remote `._*` file all passed.
+- **Terminal hook:** entering a subfolder with spaces under the new mount root
+  prompted, opened the remote shell in the exact mapped directory and returned
+  to the local shell on exit.
+- **Real network cut (Tailscale turned off for about 60 s):** the bridge kept
+  the same process; reads, `stat`, directory listing and writes failed with
+  `Input/output error` (a failed write is visible, never silently lost);
+  listing `~/RWS` stayed instantaneous so Finder is not frozen; the first
+  request after the cut waits for the bridge's bounded timeout (about 10–15 s)
+  and later requests fail at once; three seconds after Tailscale came back the
+  mount served data again without any remount. Six never-read files showed no
+  empty or truncated reads (the two `rc=142` results were the test harness's own
+  10-second alarm), and contents were intact afterwards.
+
+Not covered: reboot and login remount, a delayed Tailscale start at login, the
+app's GUI flow and Finder sidebar entry with the new path, Ctrl+C and terminal
+resize in a human session, and Delta projects, which must be re-added at the
+new path. The repository-local SSHFS build was deleted with macFUSE; the
+legacy FSKit path can no longer mount on this Mac.
