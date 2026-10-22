@@ -120,21 +120,71 @@ struct ContentView: View {
     }
 
     private var addWorkspace: some View {
-        GroupBox("Ajouter un espace") {
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
-                GridRow { Text("Nom"); TextField("demo", text: $name) }
-                GridRow { Text("Hôte SSH"); TextField("user@example", text: $host) }
-                GridRow { Text("Dossier distant"); TextField("/chemin/absolu", text: $remotePath) }
-            }
-            HStack {
-                Spacer()
-                Button("Ajouter") {
-                    Task { await model.add(name: name, host: host, remotePath: remotePath, mountPath: "/Volumes/RWS-\(name)") }
+        GroupBox("Ajouter une VM") {
+            VStack(alignment: .leading, spacing: 10) {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                    GridRow { Text("Nom"); TextField("demo", text: $name) }
+                    GridRow {
+                        Text("Machine")
+                        HStack {
+                            TextField("utilisateur@machine", text: $host)
+                            Menu("Machines Tailscale") {
+                                ForEach(model.vmMachines) { machine in
+                                    Button("\(machine.name) — \(machine.os)\(machine.online ? "" : " (hors ligne)")") {
+                                        host = hostValue(for: machine)
+                                        if name.isEmpty { name = machine.name }
+                                    }
+                                }
+                            }
+                            .disabled(model.vmMachines.isEmpty)
+                            .fixedSize()
+                        }
+                    }
+                    GridRow { Text("Dossier distant"); TextField("/chemin/absolu", text: $remotePath) }
                 }
-                .disabled(!model.configurationReady || name.isEmpty || host.isEmpty || !remotePath.hasPrefix("/"))
+                if !model.vmChecks.isEmpty { vmCheckList }
+                if model.vmCheckRunning { ProgressView("Vérification de la VM…").controlSize(.small) }
+                HStack {
+                    Button("Vérifier") { Task { await model.checkVM(host: host, remote: remotePath) } }
+                        .disabled(host.isEmpty || model.vmCheckRunning)
+                    Spacer()
+                    Button("Ajouter et monter") {
+                        Task { await model.addVM(name: name, host: host, remotePath: remotePath) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.configurationReady || name.isEmpty || host.isEmpty || !remotePath.hasPrefix("/") || model.vmCheckRunning)
+                }
+                Text("RWS vérifie d’abord le Mac et la VM (Tailscale, SSH, SFTP, dossier) et vous dit exactement quoi corriger. Rien n’est installé à votre place ; le dossier apparaît ensuite dans ~/RWS.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            .padding(.top, 8)
+            .padding(.top, 4)
         }
+        .task { await model.loadMachines() }
+    }
+
+    private var vmCheckList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(model.vmChecks) { item in
+                VStack(alignment: .leading, spacing: 2) {
+                    Label(OnboardText.detail(item, host: host), systemImage: icon(for: item))
+                        .foregroundStyle(item.isFailure ? Color.red : (item.isWarning ? Color.orange : Color.primary))
+                    if let fix = OnboardText.fix(item, host: host, remote: remotePath) {
+                        Text(fix).font(.caption).foregroundStyle(.secondary)
+                            .textSelection(.enabled).padding(.leading, 22)
+                    }
+                }
+            }
+        }
+    }
+
+    private func icon(for item: OnboardCheckItem) -> String {
+        item.isFailure ? "xmark.octagon.fill" : (item.isWarning ? "exclamationmark.triangle.fill" : "checkmark.circle")
+    }
+
+    /// Keeps a typed user (`user@…`) and swaps in the chosen machine's name.
+    private func hostValue(for machine: OnboardMachine) -> String {
+        let user = host.contains("@") ? String(host.split(separator: "@", omittingEmptySubsequences: false)[0]) : ""
+        return user.isEmpty ? machine.name : "\(user)@\(machine.name)"
     }
 
     private var setup: some View {
