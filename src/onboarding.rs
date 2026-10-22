@@ -712,6 +712,269 @@ pub fn format_report(report: &Report, host_given: bool) -> String {
     text
 }
 
+/// What `rws onboard add` is asked to set up.
+#[derive(Clone, Debug)]
+pub struct AddRequest {
+    pub name: String,
+    pub host: String,
+    pub remote: String,
+    pub mount: PathBuf,
+    pub install: bool,
+}
+
+/// Where the current and the durable installations live.
+#[derive(Clone, Debug)]
+pub struct PlanContext {
+    pub exe: PathBuf,
+    pub config: PathBuf,
+    pub canonical_config: PathBuf,
+    pub canonical_binary: PathBuf,
+    pub launch_agent: PathBuf,
+    pub uid: u32,
+}
+
+/// One command of the plan. Steps re-invoke existing subcommands instead of
+/// duplicating their logic.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Step {
+    pub id: String,
+    pub program: String,
+    pub args: Vec<String>,
+    /// A failing optional step is reported as a warning and does not stop the plan.
+    pub optional: bool,
+    pub summary: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct StepResult {
+    pub id: String,
+    pub summary: String,
+    pub status: String,
+    pub output: String,
+}
+
+/// Plan the steps that register, mount and optionally install a workspace.
+pub fn plan_add(
+    context: &PlanContext,
+    config: &crate::config::Config,
+    request: &AddRequest,
+) -> Result<Vec<Step>, String> {
+    let text = |path: &std::path::Path| path.to_string_lossy().into_owned();
+    let step = |id: &str, program: &str, args: Vec<String>, optional: bool, summary: &str| Step {
+        id: id.into(),
+        program: program.into(),
+        args,
+        optional,
+        summary: summary.into(),
+    };
+    let exe = text(&context.exe);
+    let with_config = |config: &str, rest: &[&str]| -> Vec<String> {
+        ["--config", config]
+            .iter()
+            .chain(rest)
+            .map(|part| part.to_string())
+            .collect()
+    };
+    let source = text(&context.config);
+    let mut steps = Vec::new();
+    if !config.mount.nfs {
+        let untouched =
+            config.workspaces.is_empty() && config.mount.sshfs.is_none() && !config.mount.fskit;
+        if !untouched {
+            return Err("this configuration uses the legacy SSHFS/FSKit backend; disconnect its workspaces and run `rws settings --backend nfs`, or point --config at a new file".into());
+        }
+        steps.push(step(
+            "settings",
+            &exe,
+            with_config(&source, &["settings", "--backend", "nfs"]),
+            false,
+            "Use the built-in NFS backend (no macFUSE, no sudo)",
+        ));
+    }
+    match config.workspaces.iter().find(|w| w.name == request.name) {
+        Some(w)
+            if w.host == request.host
+                && w.remote_root == request.remote
+                && w.mount_root == request.mount => {}
+        Some(_) => {
+            return Err(format!(
+                "workspace `{}` already exists with different settings; choose another name or remove the old entry",
+                request.name
+            ));
+        }
+        None => steps.push(step(
+            "workspace_add",
+            &exe,
+            with_config(
+                &source,
+                &[
+                    "workspace",
+                    "add",
+                    &request.name,
+                    "--ssh",
+                    &request.host,
+                    "--remote",
+                    &request.remote,
+                    "--mount",
+                    &text(&request.mount),
+                ],
+            ),
+            false,
+            "Register the workspace",
+        )),
+    }
+    if request.install {
+        let binary = text(&context.canonical_binary);
+        let canonical = text(&context.canonical_config);
+        steps.push(step(
+            "install",
+            &exe,
+            with_config(&source, &["install"]),
+            false,
+            "Install RWS durably for this user",
+        ));
+        steps.push(step(
+            "autostart",
+            &binary,
+            vec!["autostart".into(), "install".into()],
+            false,
+            "Write the login agent that remounts after a restart",
+        ));
+        steps.push(step(
+            "bootstrap",
+            "launchctl",
+            vec![
+                "bootstrap".into(),
+                format!("gui/{}", context.uid),
+                text(&context.launch_agent),
+            ],
+            true,
+            "Start the login agent now",
+        ));
+        steps.push(step(
+            "connect",
+            &binary,
+            with_config(&canonical, &["connect", &request.name]),
+            false,
+            "Mount the workspace and prove it works",
+        ));
+    } else {
+        steps.push(step(
+            "connect",
+            &exe,
+            with_config(&source, &["connect", &request.name]),
+            false,
+            "Mount the workspace and prove it works",
+        ));
+    }
+    Ok(steps)
+}
+
+/// Run steps in order; a failing required step stops the run.
+pub fn execute(steps: &[Step]) -> (Vec<StepResult>, bool) {
+    let mut results = Vec::new();
+    for step in steps {
+        let outcome = process::output(
+            Command::new(&step.program).args(&step.args),
+            Duration::from_secs(600),
+        );
+        let (succeeded, output) = match outcome {
+            Ok(out) => (
+                out.status.success(),
+                format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                )
+                .trim()
+                .to_string(),
+            ),
+            Err(message) => (false, message),
+        };
+        let status = match (succeeded, step.optional) {
+            (true, _) => "done",
+            (false, true) => "warning",
+            (false, false) => "failed",
+        };
+        results.push(StepResult {
+            id: step.id.clone(),
+            summary: step.summary.clone(),
+            status: status.into(),
+            output,
+        });
+        if status == "failed" {
+            return (results, false);
+        }
+    }
+    (results, true)
+}
+
+/// Everything `rws onboard add` decided and did.
+#[derive(Clone, Debug, Serialize)]
+pub struct AddReport {
+    pub ok: bool,
+    pub dry_run: bool,
+    pub checks: Vec<Check>,
+    pub steps: Vec<Step>,
+    pub results: Vec<StepResult>,
+    pub mount: String,
+}
+
+/// Human rendering of `add`: the failed checks, or the plan, or the results.
+pub fn format_add(report: &AddReport) -> String {
+    let checks_ok = !report.checks.iter().any(|c| c.status == Status::Fail);
+    if !checks_ok {
+        return format_report(
+            &Report {
+                ok: false,
+                checks: report.checks.clone(),
+                machines: Vec::new(),
+            },
+            true,
+        );
+    }
+    let warnings = report
+        .checks
+        .iter()
+        .filter(|c| c.status == Status::Warn)
+        .count();
+    let mut text = format!("Checks passed ({warnings} warning(s)).\n");
+    for item in report.checks.iter().filter(|c| c.status == Status::Warn) {
+        text.push_str(&format!("  warn {}: {}\n", item.id, item.detail));
+    }
+    if report.dry_run {
+        text.push_str("\nPlan:\n");
+        for (index, step) in report.steps.iter().enumerate() {
+            text.push_str(&format!("  {}. {}\n", index + 1, step.summary));
+        }
+        text.push_str("\nDry run: nothing was changed. Run again without --dry-run to apply.\n");
+        return text;
+    }
+    text.push('\n');
+    for result in &report.results {
+        let mark = match result.status.as_str() {
+            "done" => "done",
+            "warning" => "warn",
+            _ => "FAIL",
+        };
+        text.push_str(&format!("  [{mark}] {}\n", result.summary));
+        if result.status != "done" && !result.output.is_empty() {
+            for line in result.output.lines() {
+                text.push_str(&format!("         {line}\n"));
+            }
+        }
+    }
+    if report.ok {
+        text.push_str(&format!(
+            "\nDone. Your VM folder is mounted at {} (open it in Finder).\nOptional next steps:\n  - terminal auto-switch on `cd`: rws hook install\n  - Delta agent rules: rws delta-rules\n",
+            report.mount
+        ));
+    } else {
+        text.push_str("\nStopped: fix the step above and run the same command again. Completed steps are kept and re-running is safe.\n");
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -932,5 +1195,184 @@ mod tests {
         assert!(fix(&readonly).contains("chown") || fix(&readonly).contains("permission"));
         let garbage = directory_check("/srv/p", "weird");
         assert_eq!(garbage.status, Status::Fail);
+    }
+
+    fn context() -> PlanContext {
+        PlanContext {
+            exe: "/opt/rws".into(),
+            config: "/work/setup.json".into(),
+            canonical_config: "/home/u/Library/Application Support/RWS/config.json".into(),
+            canonical_binary: "/home/u/Library/Application Support/RWS/bin/rws".into(),
+            launch_agent: "/home/u/Library/LaunchAgents/io.rws.mounts.plist".into(),
+            uid: 501,
+        }
+    }
+
+    fn request(install: bool) -> AddRequest {
+        AddRequest {
+            name: "demo".into(),
+            host: "dev@vm".into(),
+            remote: "/srv/p".into(),
+            mount: "/home/u/RWS/demo".into(),
+            install,
+        }
+    }
+
+    fn config(json: serde_json::Value) -> crate::config::Config {
+        serde_json::from_value(json).unwrap()
+    }
+
+    fn ids(steps: &[Step]) -> Vec<&str> {
+        steps.iter().map(|s| s.id.as_str()).collect()
+    }
+
+    #[test]
+    fn a_fresh_configuration_selects_the_nfs_backend_adds_and_connects() {
+        let fresh = config(serde_json::json!({"version":1,"workspaces":[],"mount":{}}));
+        let steps = plan_add(&context(), &fresh, &request(false)).unwrap();
+        assert_eq!(ids(&steps), ["settings", "workspace_add", "connect"]);
+        assert_eq!(steps[0].program, "/opt/rws");
+        assert_eq!(
+            steps[0].args,
+            [
+                "--config",
+                "/work/setup.json",
+                "settings",
+                "--backend",
+                "nfs"
+            ]
+        );
+        assert_eq!(
+            steps[1].args,
+            [
+                "--config",
+                "/work/setup.json",
+                "workspace",
+                "add",
+                "demo",
+                "--ssh",
+                "dev@vm",
+                "--remote",
+                "/srv/p",
+                "--mount",
+                "/home/u/RWS/demo"
+            ]
+        );
+        assert_eq!(
+            steps[2].args,
+            ["--config", "/work/setup.json", "connect", "demo"]
+        );
+        assert!(steps.iter().all(|s| !s.optional));
+    }
+
+    #[test]
+    fn an_nfs_configuration_keeps_its_backend_and_an_identical_workspace_is_reused() {
+        let existing = config(serde_json::json!({
+            "version":1,
+            "workspaces":[{"name":"demo","host":"dev@vm","remote_root":"/srv/p","mount_root":"/home/u/RWS/demo"}],
+            "mount":{"nfs":true}
+        }));
+        let steps = plan_add(&context(), &existing, &request(false)).unwrap();
+        assert_eq!(ids(&steps), ["connect"], "re-running must be safe");
+    }
+
+    #[test]
+    fn conflicting_names_and_legacy_backends_are_refused_before_any_change() {
+        let other = config(serde_json::json!({
+            "version":1,
+            "workspaces":[{"name":"demo","host":"dev@other","remote_root":"/srv/p","mount_root":"/home/u/RWS/demo"}],
+            "mount":{"nfs":true}
+        }));
+        let error = plan_add(&context(), &other, &request(false)).unwrap_err();
+        assert!(
+            error.contains("already exists") && error.contains("demo"),
+            "{error}"
+        );
+        let legacy = config(serde_json::json!({
+            "version":1,
+            "workspaces":[{"name":"old","host":"dev@vm","remote_root":"/srv/o","mount_root":"/Volumes/RWS-old"}],
+            "mount":{"fskit":true,"sshfs":"/x/sshfs"}
+        }));
+        let error = plan_add(&context(), &legacy, &request(false)).unwrap_err();
+        assert!(
+            error.contains("legacy") && error.contains("settings --backend nfs"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn install_adds_the_durable_install_the_login_agent_and_connects_from_the_durable_copy() {
+        let fresh = config(serde_json::json!({"version":1,"workspaces":[],"mount":{}}));
+        let steps = plan_add(&context(), &fresh, &request(true)).unwrap();
+        assert_eq!(
+            ids(&steps),
+            [
+                "settings",
+                "workspace_add",
+                "install",
+                "autostart",
+                "bootstrap",
+                "connect"
+            ]
+        );
+        assert_eq!(steps[2].args, ["--config", "/work/setup.json", "install"]);
+        assert_eq!(
+            steps[3].program,
+            "/home/u/Library/Application Support/RWS/bin/rws"
+        );
+        assert_eq!(steps[3].args, ["autostart", "install"]);
+        assert_eq!(steps[4].program, "launchctl");
+        assert_eq!(
+            steps[4].args,
+            [
+                "bootstrap",
+                "gui/501",
+                "/home/u/Library/LaunchAgents/io.rws.mounts.plist"
+            ]
+        );
+        assert!(
+            steps[4].optional,
+            "an already-loaded agent must not fail the plan"
+        );
+        assert_eq!(
+            steps[5].program,
+            "/home/u/Library/Application Support/RWS/bin/rws"
+        );
+        assert_eq!(
+            steps[5].args,
+            [
+                "--config",
+                "/home/u/Library/Application Support/RWS/config.json",
+                "connect",
+                "demo"
+            ]
+        );
+    }
+
+    #[test]
+    fn execution_stops_at_the_first_failed_required_step_and_tolerates_optional_ones() {
+        let step = |id: &str, script: &str, optional: bool| Step {
+            id: id.into(),
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), script.into()],
+            optional,
+            summary: format!("run {id}"),
+        };
+        let (results, ok) = execute(&[
+            step("one", "echo first", false),
+            step("two", "echo warned >&2; exit 5", true),
+            step("three", "echo third", false),
+        ]);
+        assert!(ok);
+        let statuses: Vec<_> = results.iter().map(|r| r.status.as_str()).collect();
+        assert_eq!(statuses, ["done", "warning", "done"]);
+        assert!(results[0].output.contains("first") && results[1].output.contains("warned"));
+        let (results, ok) = execute(&[
+            step("one", "exit 3", false),
+            step("two", "echo never", false),
+        ]);
+        assert!(!ok);
+        assert_eq!(results.len(), 1, "nothing may run after a required failure");
+        assert_eq!(results[0].status, "failed");
     }
 }

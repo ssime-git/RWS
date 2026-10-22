@@ -297,3 +297,169 @@ fn human_output_shows_each_failure_with_its_fix_and_a_verdict() {
     );
     assert!(stdout.to_lowercase().contains("not ready"), "{stdout}");
 }
+
+fn add_args<'a>(config: &'a str, extra: &[&'a str]) -> Vec<&'a str> {
+    let mut args = vec![
+        "--config",
+        config,
+        "onboard",
+        "add",
+        "demo",
+        "--host",
+        "dev@razer-1",
+        "--remote",
+        "/srv/p",
+    ];
+    args.extend(extra);
+    args
+}
+
+#[test]
+fn add_dry_run_plans_the_nfs_setup_and_changes_nothing() {
+    let fake = Fake::new();
+    fake.put("resolved", "razer-1.tail1234.ts.net");
+    let home = tempfile::tempdir().unwrap();
+    let config = home.path().join("cfg.json");
+    let args = add_args(config.to_str().unwrap(), &["--dry-run", "--json"]);
+    let (code, stdout, stderr) = fake.rws_in(home.path(), &args);
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    let report = parse(&stdout);
+    assert_eq!(
+        (report["ok"].as_bool(), report["dry_run"].as_bool()),
+        (Some(true), Some(true))
+    );
+    let ids: Vec<_> = report["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["settings", "workspace_add", "connect"]);
+    let add = &report["steps"][1]["args"];
+    let mount = format!("{}/RWS/demo", home.path().display());
+    assert!(
+        add.as_array().unwrap().iter().any(|a| a == mount.as_str()),
+        "{add}"
+    );
+    assert!(report["results"].as_array().unwrap().is_empty());
+    assert!(
+        !config.exists(),
+        "a dry run must not create the configuration"
+    );
+}
+
+#[test]
+fn add_stops_on_a_failed_check_without_touching_the_configuration() {
+    let fake = Fake::new();
+    fake.put("ssh_fail", "dev@razer-1: Permission denied (publickey).\n");
+    let home = tempfile::tempdir().unwrap();
+    let config = home.path().join("cfg.json");
+    let args = add_args(config.to_str().unwrap(), &["--json"]);
+    let (code, stdout, _) = fake.rws_in(home.path(), &args);
+    assert_eq!(code, 1);
+    let report = parse(&stdout);
+    assert_eq!(report["ok"], false);
+    assert_eq!(find(&report, "vm.reachable").unwrap()["code"], "key_denied");
+    assert!(report["steps"].as_array().unwrap().is_empty());
+    assert!(!config.exists());
+}
+
+#[test]
+fn add_refuses_a_name_that_exists_with_other_settings_and_keeps_the_file() {
+    let fake = Fake::new();
+    let home = tempfile::tempdir().unwrap();
+    let config = home.path().join("cfg.json");
+    let existing = serde_json::json!({
+        "version": 1,
+        "workspaces": [{"name": "demo", "host": "dev@other", "remote_root": "/srv/p",
+                        "mount_root": format!("{}/RWS/demo", home.path().display())}],
+        "mount": {"nfs": true}
+    })
+    .to_string();
+    std::fs::write(&config, &existing).unwrap();
+    let args = add_args(config.to_str().unwrap(), &["--dry-run"]);
+    let (code, _, stderr) = fake.rws_in(home.path(), &args);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("already exists"), "{stderr}");
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), existing);
+}
+
+#[test]
+fn add_with_install_plans_the_durable_steps_from_the_users_library() {
+    let fake = Fake::new();
+    let home = tempfile::tempdir().unwrap();
+    let config = home.path().join("cfg.json");
+    let args = add_args(
+        config.to_str().unwrap(),
+        &["--install", "--dry-run", "--json"],
+    );
+    let (code, stdout, stderr) = fake.rws_in(home.path(), &args);
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    let report = parse(&stdout);
+    let ids: Vec<_> = report["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "settings",
+            "workspace_add",
+            "install",
+            "autostart",
+            "bootstrap",
+            "connect"
+        ]
+    );
+    let durable = format!(
+        "{}/Library/Application Support/RWS/bin/rws",
+        home.path().display()
+    );
+    assert_eq!(report["steps"][3]["program"], durable.as_str());
+    assert_eq!(report["steps"][5]["program"], durable.as_str());
+}
+
+#[test]
+fn add_rejects_an_invalid_name_before_any_ssh_attempt() {
+    let fake = Fake::new();
+    let home = tempfile::tempdir().unwrap();
+    let config = home.path().join("cfg.json");
+    let (code, _, stderr) = fake.rws_in(
+        home.path(),
+        &[
+            "--config",
+            config.to_str().unwrap(),
+            "onboard",
+            "add",
+            "bad name!",
+            "--host",
+            "dev@razer-1",
+            "--remote",
+            "/srv/p",
+            "--dry-run",
+        ],
+    );
+    assert_eq!(code, 1);
+    assert!(stderr.contains("workspace name"), "{stderr}");
+    assert!(
+        !fake.dir.path().join("ssh.log").exists(),
+        "no SSH before validation"
+    );
+}
+
+#[test]
+fn add_human_dry_run_lists_numbered_steps_and_says_nothing_changed() {
+    let fake = Fake::new();
+    let home = tempfile::tempdir().unwrap();
+    let config = home.path().join("cfg.json");
+    let args = add_args(config.to_str().unwrap(), &["--dry-run"]);
+    let (code, stdout, _) = fake.rws_in(home.path(), &args);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("1. ") && stdout.contains("3. "), "{stdout}");
+    assert!(
+        stdout.to_lowercase().contains("dry run") && stdout.contains("nothing was changed"),
+        "{stdout}"
+    );
+}
