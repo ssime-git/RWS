@@ -5,6 +5,8 @@ description: Use when an agent needs to install, configure, validate, or trouble
 
 # RWS setup on a new Mac
 
+To connect an already working Mac to a VM, use `rws-vm-onboarding` instead; this skill is for building and validating RWS itself on a new Mac.
+
 Bring a fresh Mac to a verified remote-workspace workflow. Record separate results for build, SSH execution, filesystem mount, Finder edits, and unmount. Passing unit tests or `rws doctor` does not prove mounting works.
 
 **Default mount backend: the built-in NFS bridge.** `rws connect` starts `rws nfs-bridge`, a localhost-only NFSv3 server that forwards to the remote host over the system `ssh -s HOST sftp`; macOS mounts it with its own NFS client. It needs no macFUSE, no SSHFS, no remote install and no sudo. Mount points must be user-owned (`~/RWS/NAME`), never under `/Volumes`. Read `docs/nfs-bridge.md`. macFUSE/SSHFS (sections 2b and 5) is a legacy backend: install it only when the user explicitly asks for it.

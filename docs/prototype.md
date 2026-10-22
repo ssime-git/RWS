@@ -7,19 +7,39 @@
 - macOS for mounting; the Rust core and non-mount CLI tests also target Linux.
 - Rust stable and the macOS Command Line Tools to build. The initial local checks used Rust 1.98.1.
 - Working system `ssh` and `sftp`, with a configured host and a POSIX-compatible remote login shell.
-- For Finder access, install [macFUSE](https://macfuse.github.io/) and a compatible SSHFS implementation. The currently tested FSKit path requires the [patched RWS SSHFS build](sshfs-fskit.md); a stock SSHFS installation alone does not provide those corrections. RWS does not install or configure system extensions. The appropriate backend must be configured and tested on your Mac.
+- For Finder access, nothing to install: the default [NFS bridge](nfs-bridge.md) mounts under `~/RWS/NAME` with no macFUSE and no privileges. The legacy macFUSE/SSHFS backend (the [patched RWS SSHFS build](sshfs-fskit.md)) is only for an explicit need; RWS does not install or configure system extensions.
 
-## Build and register a workspace
+## Onboard a VM (recommended)
+
+```sh
+rws onboard check                                    # this Mac and your Tailscale machines
+rws onboard check --host user@devbox --remote /home/user/projects/demo
+rws onboard add demo --host user@devbox --remote /home/user/projects/demo --dry-run
+rws onboard add demo --host user@devbox --remote /home/user/projects/demo
+```
+
+`check` is read-only and exits 1 when a check fails; `add` runs it, changes nothing
+if it fails, then selects the NFS backend (for a configuration without any),
+registers the workspace at `~/RWS/NAME`, mounts it and proves it. `--install` also
+installs RWS durably and starts the login agent; `--mount PATH` overrides the mount
+point; `--json` gives a machine-readable report. Every finding, its code and its
+fix: [Connect a Mac to a VM](onboarding.md).
+
+## Build and register a workspace by hand
 
 ```sh
 cargo build --locked
-./target/debug/rws workspace add demo \
+./target/debug/rws --config .rws-local/setup.json settings --backend nfs
+./target/debug/rws --config .rws-local/setup.json workspace add demo \
   --ssh user@devbox \
   --remote /home/user/projects/demo \
-  --mount /Volumes/RWS-demo
-./target/debug/rws workspace list
-./target/debug/rws doctor --workspace demo
+  --mount "$HOME/RWS/demo"
+./target/debug/rws --config .rws-local/setup.json workspace list
+./target/debug/rws --config .rws-local/setup.json doctor --workspace demo
 ```
+
+The legacy FSKit backend registers `--mount /Volumes/RWS-demo` instead (see
+[install](install.md#legacy-backend-macfuse-and-sshfs)).
 
 Replace the example destination and remote directory with your own. Use an SSH alias for custom ports, IPv6, bastions, identities, and other SSH configuration. RWS never rewrites `~/.ssh/config` or disables host-key checks.
 

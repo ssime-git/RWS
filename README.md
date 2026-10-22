@@ -9,15 +9,17 @@ where the files live and where explicitly launched commands execute.
 [Architecture](docs/architecture.md) · [Documentation](docs/README.md) ·
 [Feature backlog](https://github.com/ssime-git/RWS/issues/1)
 
-> **Development preview.** The app and CLI work on the tested Mac/SSH setup.
-> There is no published signed release yet. Mounting currently requires macFUSE
-> and an external experimental SSHFS build. Installation on a clean Mac and
-> failure recovery are not fully validated. See [tested scope](docs/validation.md).
+> **Development preview.** The app and CLI work on the tested Mac/Tailscale/SSH
+> setup. Files are mounted through RWS's own NFS bridge: no macFUSE, no admin
+> rights, nothing installed on the VM. There is no published signed release yet;
+> installation on a clean Mac, reboot remounting and the app's click-through flow
+> are not fully validated. See [tested scope](docs/validation.md).
 
 ## Choose your starting point
 
 | You want to… | Start here |
 | --- | --- |
+| Connect a Mac to a VM you reach over Tailscale | [Connect a Mac to a VM](docs/onboarding.md) |
 | Open an existing `RWS.app` by double-clicking | [App user guide](docs/install.md#1-get-the-app) |
 | Download a development build without compiling RWS | [Build availability](docs/install.md#build-availability) |
 | Compile, test and run the app yourself | [Developer quick start](docs/development.md) |
@@ -38,27 +40,28 @@ flowchart LR
 ```
 
 **Files and execution are separate paths.** The mount backend handles filesystem
-operations: RWS's own [localhost NFS bridge](docs/nfs-bridge.md), which needs no
-macFUSE or privileges, or macFUSE with SSHFS. Neither redirects arbitrary Mac
-processes: a normal terminal opened inside a mounted workspace still runs locally. Use **Lancer sur la VM** in the app, or
-`rws agent`, `rws exec` or `rws shell`, for remote execution today.
-
-The original product goal is broader: working in a mounted project should run its
-commands on the VM naturally, including Delta without special agent instructions
-where feasible. **That transparent execution is not implemented.** It is tracked
-in [#1](https://github.com/ssime-git/RWS/issues/1),
-[Delta #2](https://github.com/ssime-git/RWS/issues/2) and
-[terminals #3](https://github.com/ssime-git/RWS/issues/3).
+operations: RWS's own [localhost NFS bridge](docs/nfs-bridge.md) (default; no
+macFUSE, no privileges), or the legacy macFUSE with SSHFS. Neither redirects
+arbitrary Mac processes. Execution reaches the VM through the path each tool
+offers: the opt-in zsh hook (a `[Y/n]` prompt when a terminal enters a mount),
+**Lancer sur la VM** or `rws agent`/`rws exec`/`rws shell`, and Delta's agent
+rules. A noninteractive script or an IDE's internal process stays local by
+design. The [per-path decision](docs/architecture.md#6-architecture-decision-per-path-integration-no-universal-interception)
+and its evidence replace the former "transparent execution" goal
+([#1](https://github.com/ssime-git/RWS/issues/1)–[#5](https://github.com/ssime-git/RWS/issues/5), closed).
 
 ## A first session
 
-Once the [prerequisites](docs/install.md#2-prepare-the-mac-and-the-remote-host) are ready:
+Start from a working Mac and a VM reachable over Tailscale with key-based SSH
+([what is expected](docs/onboarding.md#before-you-start)):
 
-1. Double-click **RWS.app**. Review the detected configuration and dependency status.
-2. Save the SSHFS path and FSKit setting in **Configuration avancée** on first use,
-   then add an SSH destination and absolute remote folder, or select an existing space.
-3. Click **Ouvrir dans le Finder** to connect and browse. RWS also attempts to pin
-   the volume in Finder; if that fails, it explains the manual fallback.
+1. Double-click **RWS.app**.
+2. In **Ajouter une VM**, pick your machine, enter the remote folder and a name,
+   and press **Vérifier**. RWS lists anything to fix, with the exact command, and
+   installs nothing for you. When it is green, press **Ajouter et monter**.
+3. The folder appears at `~/RWS/NAME` and opens in Finder; RWS also attempts to pin
+   it in the Finder sidebar and explains the manual fallback if that fails.
+   The same flow in a terminal: `rws onboard check` then `rws onboard add`.
 4. Enter a remotely installed CLI such as `claude` or `codex`, then choose
    **Lancer sur la VM**. The terminal shows the remote host, OS and directory.
 5. Close files using the mount and choose **Déconnecter** when finished.
@@ -71,10 +74,11 @@ An editor extension without a CLI needs its own integration.
 
 | Available now | Not yet delivered |
 | --- | --- |
-| Native macOS app; register/connect/disconnect spaces | Automatic switch for non-zsh shells, scripts and IDE-internal processes |
-| Opt-in zsh hook: `cd` into a verified mount opens the remote shell | |
+| Native macOS app; register/connect/disconnect spaces | Automatic switch for non-zsh shells, scripts and IDE-internal processes (by design) |
+| Guided VM onboarding: checks, exact fixes, NFS mount (`rws onboard`) | Signed, notarized public release |
+| Opt-in zsh hook: `cd` into a verified mount offers the remote shell | |
 | Generic remote agent launcher and explicit SSH commands | General redirection of Delta's native processes |
-| Config/dependency discovery and actionable errors | One-step clean-Mac dependency installation |
+| Config/dependency discovery and actionable errors | Zero-setup installation on a clean Mac |
 | Finder pinning with bookmark renewal and manual fallback | Sessions surviving disconnects and cross-device reattachment |
 | Build CI, local bundle replacement and release pipeline | Signed public release and validated user auto-updates |
 
@@ -85,7 +89,7 @@ it is not equivalent to native remote execution without instructions.
 ### Persistent mounts on macOS
 
 After a configuration and its mounts work interactively, `rws install` copies
-RWS, the selected SSHFS build, and the configuration into the user's Application
+RWS (and the SSHFS build, with the legacy backend) and the configuration into the user's Application
 Support directory. `rws autostart install` then creates one LaunchAgent that
 checks eligible workspaces at login and every 30 seconds. Explicit Disconnect
 persists a pause, including after reboot, until the next Connect. Existing

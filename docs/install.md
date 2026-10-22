@@ -3,13 +3,16 @@
 [Documentation](README.md) · [Build it yourself](development.md) · [Troubleshooting](troubleshooting.md)
 
 This guide is for using the macOS app. You do not need Rust to run a built bundle.
-However, the current preview is **not a self-contained, zero-setup installer**:
-macFUSE, compatible SSHFS and SSH access must already be configured.
+The current preview is **not a zero-setup installer**: you need Tailscale, a VM
+reachable over key-based SSH, and an app bundle (see below). macFUSE is **not**
+required: RWS mounts files through its own [NFS bridge](nfs-bridge.md). To connect
+a Mac to a VM step by step, read [Connect a Mac to a VM](onboarding.md).
 
 ## Durable macOS installation
 
-After validating a configuration from a checkout, install it into the macOS
-user state before enabling login remounting:
+`rws onboard add --install` (see [Connect a Mac to a VM](onboarding.md)) performs
+the steps below for you. After validating a configuration from a checkout, you can
+also install it into the macOS user state by hand before enabling login remounting:
 
 ```sh
 /absolute/path/to/rws --config /absolute/path/to/setup.json install
@@ -17,15 +20,15 @@ user state before enabling login remounting:
 ```
 
 RWS keeps its canonical configuration in `~/Library/Application Support/RWS/`,
-uses a managed executable and versioned SSHFS release there, and preserves the
-source configuration. The single `io.rws.mounts` LaunchAgent reads that canonical
+uses a managed executable there (and a versioned SSHFS release with the legacy
+backend), and preserves the source configuration. The single `io.rws.mounts` LaunchAgent reads that canonical
 configuration at login and every 30 seconds, including after successful passes.
 Only workspaces whose saved intent is `connected` are eligible; missing intent
 entries preserve the old default of connecting. `disconnect` saves a persistent
 pause, cleared by `connect`. See the [state contract](connection.md#automatic-remount-contract).
-macFUSE's
-privileged helper still must be approved once from a real GUI terminal; a
-LaunchAgent cannot show that prompt.
+With the legacy macFUSE backend, its
+privileged helper must be approved once from a real GUI terminal; a
+LaunchAgent cannot show that prompt. The NFS bridge needs no approval.
 
 ### Activate now and verify
 
@@ -49,9 +52,9 @@ launchctl print "gui/$(id -u)/io.rws.mounts"
 mount | grep RWS
 ```
 
-If the service is absent, rerun the two durable-install commands above. A failed
-mount does not establish that macFUSE can display a privilege prompt: approve its
-helper once in a GUI terminal, then let Launchd retry.
+If the service is absent, rerun the two durable-install commands above. With the
+legacy backend, a failed mount does not establish that macFUSE can display a
+privilege prompt: approve its helper once in a GUI terminal, then let Launchd retry.
 
 Refresh zsh and Delta manually after installation using the managed executable:
 
@@ -99,7 +102,7 @@ is the documented developer route while production signing is pending.
 3. Check the revision and build date displayed in the window if you suspect an old copy.
 4. If you already configured RWS, let discovery finish. Otherwise continue below.
 
-Moving the app into Applications does not copy configuration or SSHFS. If the old
+Moving the app into Applications does not copy configuration. If the old
 configuration was in a checkout's `.rws-local/`, choose that existing `config.json`
 once in **Configuration avancée → Choisir une configuration…**. Do not select the
 folder, template README or ZIP. The original config remains in place and is remembered.
@@ -109,67 +112,48 @@ folder, template README or ZIP. The original config remains in place and is reme
 | Requirement | Where / how |
 | --- | --- |
 | Apple silicon Mac | Current app packaging is arm64. Other packages are not supplied. |
-| Compatible macFUSE installation | Install from the [official macFUSE site](https://macfuse.github.io/). macFUSE and SSHFS are separate components. |
-| Compatible SSHFS | The tested FSKit route requires the [experimental RWS SSHFS build](sshfs-fskit.md), version `3.7.5-rws-fskit3` or a compatible correction. This executable and its libraries are not bundled in RWS. |
-| FSKit activation | Enable the applicable macFUSE FSKit extension in macOS System Settings → General → Login Items & Extensions. Labels depend on macOS. Presence of macFUSE files does not prove activation. |
-| Reachable Unix-like SSH host | Working SSH/SFTP and a POSIX-compatible login shell. A VPN such as Tailscale is optional; connect it if your host requires it. |
-| Prepared SSH authentication | Establish normal SSH access and known-host trust first. Mounting runs without an interactive password prompt. |
-| Existing remote folder | Choose an absolute remote path you own. Initial verification requires a writable root for a disposable proof file. |
-| Remote filenames | The patched FSKit mode expects UTF-8 NFC names. NFD, invalid UTF-8 and canonically equivalent name collisions are not supported; review the [Unicode contract](sshfs-fskit.md#unicode-filenames) before mounting an existing project. |
+| Tailscale | Installed, connected and signed in on the Mac and on the VM. The guided onboarding assumes it; any route that reaches the VM over SSH also works for the CLI. |
+| Key-based SSH to the VM | `ssh USER@MACHINE true` must succeed without a password prompt. Mounting runs non-interactively. RWS does not create SSH keys, edit `~/.ssh/config` or type passwords. |
+| SFTP server on the VM | OpenSSH's `sftp-server` (the Linux default); its `posix-rename` support lets editors save atomically. |
+| Existing remote folder | An absolute path you can write to; the first verification writes a disposable proof file. |
 
-The RWS mount tests used macOS 27.0/macFUSE 5.4.0. macFUSE documents its FSKit
-backend for macOS 26; RWS's app deployment target alone does not establish mount
-compatibility on older systems. See [upstream macFUSE](https://macfuse.github.io/)
-and [our tested scope](validation.md).
-
-For the person preparing SSH access, replace `devbox` with your configured SSH alias:
+Nothing else: no macFUSE, no SSHFS, no sudo, nothing installed on the VM.
+`rws onboard check` (or **Vérifier** in the app) verifies every line above and
+gives the exact fix for what is missing; see
+[Connect a Mac to a VM](onboarding.md#fixing-a-failure). Verify SSH by hand with
+your own alias or `USER@MACHINE`:
 
 ```sh
 ssh devbox
 ```
 
-Verify the destination, finish any normal authentication/trust steps, then `exit`.
-RWS does not create SSH keys, change `~/.ssh/config`, install remote agents or
-configure their credentials. Never place a password in the workspace form.
-
-**If you have no compatible SSHFS binary:** follow the separate
-[SSHFS build guide](sshfs-fskit.md) or have your administrator prepare it and its
-runtime dependencies. Downloading RWS alone cannot complete mounting on a new Mac.
-Do not copy a build path or a binary tied to another person's libraries blindly.
+Finish any normal authentication or trust prompt yourself, then `exit`.
+Never place a password in the workspace form.
 
 ## 3. Configure the app once
 
-On startup the app checks known configuration locations, macFUSE's runtime and
-SSHFS execution. Missing/incompatible prerequisites produce a message.
-
-For a new setup using the tested FSKit route:
-
-1. Expand **Configuration avancée**.
-2. Choose the absolute path of the compatible `sshfs` executable.
-3. Enable **Utiliser le moteur macFUSE FSKit** and click **Enregistrer**.
-4. Click **Vérifier à nouveau** if the dependency message is still present.
-
-Do this before adding the first workspace. The stored backend defaults to the
-system/default backend; automatic discovery does **not** silently change it to FSKit.
-Keep the chosen SSHFS file and its dynamic libraries at valid locations.
-
-Existing valid settings do not need to be re-entered. Discovery uses the default
-Application Support config, a remembered source, or a bounded set of known paths;
-it does not scan every project. [Discovery details](macos-app.md#configuration-discovery-at-startup).
+With the default NFS bridge there is nothing to configure: a new configuration
+selects it automatically the first time you add a VM. On startup the app checks
+known configuration locations and discovers an existing one; see
+[discovery details](macos-app.md#configuration-discovery-at-startup). Choosing
+the legacy macFUSE/SSHFS backend is covered in the
+[legacy section](#legacy-backend-macfuse-and-sshfs) below.
 
 ## 4. Add or select a workspace
 
-Example values — replace these with your own:
+In **Ajouter une VM**:
 
 | Field | Example | Meaning |
 | --- | --- | --- |
-| **Nom** | `demo` | Workspace name; local mount becomes `/Volumes/RWS-demo` |
-| **Hôte SSH** | `devbox` | SSH alias or `user@host`; configuration already works outside RWS |
-| **Dossier distant** | `/home/dev/projects/demo` | Absolute directory on the remote host |
+| **Nom** | `demo` | Workspace name; the folder appears at `~/RWS/demo` |
+| **Machine** | `dev@my-vm` | `user@machine`; the **Machines Tailscale** menu fills the machine name from your tailnet |
+| **Dossier distant** | `/home/dev/projects/demo` | Absolute directory on the VM |
 
-Click **Ajouter**. RWS saves the workspace, attempts the connection and opens Finder.
-If prerequisites or the connection fail, the saved workspace may still exist:
-fix the reported problem and select it instead of adding a duplicate.
+Press **Vérifier** to list every finding with its fix, then **Ajouter et monter**
+(it repeats the checks, so it can be pressed directly). RWS registers the
+workspace, mounts it, proves it with a proof file and opens Finder. If the checks
+fail, nothing is changed: fix what is reported and try again. Re-adding the same
+workspace is harmless.
 
 For an existing workspace, select it and click **Ouvrir dans le Finder**. That
 button **connects/mounts as well as opening Finder**; merely launching RWS does
@@ -232,3 +216,25 @@ IDE-internal processes remain local — see
 
 If anything differs from these steps, open [Troubleshooting](troubleshooting.md)
 and include the displayed build revision in a report.
+
+## Legacy backend: macFUSE and SSHFS
+
+Only for an explicit need (the NFS bridge is the default and the tested route).
+This backend mounts under `/Volumes/RWS-NAME`, which the bridge refuses, and needs
+more setup. On the tested Mac the macFUSE runtime has since been removed.
+
+| Requirement | Where / how |
+| --- | --- |
+| Compatible macFUSE installation | Install from the [official macFUSE site](https://macfuse.github.io/). macFUSE and SSHFS are separate components. |
+| Compatible SSHFS | The tested FSKit route requires the [experimental RWS SSHFS build](sshfs-fskit.md), version `3.7.5-rws-fskit3` or a compatible correction. It is not bundled in RWS. |
+| FSKit activation | Enable the applicable macFUSE FSKit extension in macOS System Settings → General → Login Items & Extensions. Presence of macFUSE files does not prove activation. |
+| Remote filenames | The patched FSKit mode expects UTF-8 NFC names; review the [Unicode contract](sshfs-fskit.md#unicode-filenames). |
+
+The RWS FSKit tests used macOS 27.0/macFUSE 5.4.0; macFUSE documents its FSKit
+backend for macOS 26. To select it: expand **Configuration avancée**, choose the
+absolute path of the compatible `sshfs`, enable **Utiliser le moteur macFUSE
+FSKit**, press **Enregistrer** and **Vérifier à nouveau**, then register the
+workspace with `rws workspace add NAME --ssh HOST --remote DIR --mount /Volumes/RWS-NAME`.
+Automatic discovery never silently switches the backend. Without a compatible
+SSHFS binary, follow the [SSHFS build guide](sshfs-fskit.md); do not copy a build
+tied to another person's libraries.

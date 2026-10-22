@@ -113,7 +113,7 @@ enum Action {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Mount a registered workspace (requires SSHFS/macFUSE on macOS).
+    /// Mount a registered workspace (NFS bridge by default; macFUSE/SSHFS for the legacy backend).
     #[command(name = "connect", visible_alias = "mount")]
     Mount {
         workspace: String,

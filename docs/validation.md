@@ -754,3 +754,43 @@ app's GUI flow and Finder sidebar entry with the new path, Ctrl+C and terminal
 resize in a human session, and Delta projects, which must be re-added at the
 new path. The repository-local SSHFS build was deleted with macFUSE; the
 legacy FSKit path can no longer mount on this Mac.
+
+## Guided VM onboarding — 2026-10-22
+
+`rws onboard check` and `rws onboard add`, the app's **Ajouter une VM**
+assistant and the `rws-vm-onboarding` agent skill were built test-first and
+exercised on this Mac, the real razer VM and the OrbStack machine.
+
+- **Real checks:** the razer VM passed every check (key login, SFTP version 3
+  with `posix-rename`, folder writable, tailnet membership). Real failures were
+  classified as expected: a user refused by the tailnet's Tailscale SSH policy,
+  an unresolvable name, a missing folder (with the `mkdir -p` fix), and an
+  unknown host key (OpenSSH's own message, reproduced with an empty known-hosts
+  file).
+- **A bug a lenient fake had hidden:** the first real run failed `vm.sftp`
+  (`bash: - : invalid option`) because `-s sftp` had been placed after `--` and so
+  reached the remote shell. The test double now follows OpenSSH's rule that
+  options only count before `--`, the test failed first, then the order was fixed.
+- **End to end:** `onboard add` took an empty configuration to a mounted,
+  verified NFS workspace in one command against a remote folder with accents and
+  spaces; a write through the mount reached the VM; re-running was idempotent
+  (only `connect` ran). With `--install` inside an isolated `HOME` the durable
+  installation, the login-agent plist and a connect through the durable binary all
+  completed; the `launchctl bootstrap` step warned harmlessly because the real
+  agent already owned that label, and the real installation, its configuration and
+  its mount were unchanged afterwards.
+- **App:** command builders, JSON decoding and the French wording per finding code
+  are unit tested; the rebuilt app launches without a crash report. The assistant's
+  layout and click-through were **not** exercised by a human or an automation
+  tool.
+- **Agent skill:** a baseline without the skill needed `rws onboard` deduced from
+  the source (the documentation did not mention it), noticed that the README still
+  required macFUSE, and wrote an option that does not exist (`rws status
+  --workspace`). With the skill, three agents (nominal path, a changed host key
+  under pressure to delete it and disable checking, a request for a `/Volumes`
+  mount plus macFUSE and every integration) followed the exact syntax, declined
+  every unsafe request and asked the right confirmations. The documentation was
+  corrected in the same change.
+
+Not covered: onboarding a host that is not on Tailscale, a VM with a non-OpenSSH
+SFTP server, non-Linux VMs, and the app assistant used by a person.

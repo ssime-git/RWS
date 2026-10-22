@@ -9,6 +9,7 @@ implementation; the feature backlog describes the desired product, not shipped b
 
 | Guide | What you will find |
 | --- | --- |
+| [Connect a Mac to a VM](onboarding.md) | Guided checks, exact fixes, NFS mount, validation; the `rws onboard` reference |
 | [Install and open the app](install.md) | Existing bundle, development download, prerequisites, first workspace |
 | [Troubleshooting](troubleshooting.md) | Symptom → check → next action |
 | [Finder behavior](finder-macos.md) | Favorites, remounts, manual pinning and file checks |

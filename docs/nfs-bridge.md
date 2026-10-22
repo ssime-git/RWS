@@ -1,6 +1,6 @@
 # NFS bridge backend (no macFUSE)
 
-[Documentation](README.md) · [Troubleshooting](troubleshooting.md) · [Validation journal](validation.md)
+[Documentation](README.md) · [Troubleshooting](troubleshooting.md) · [Validation journal](validation.md) · [Connect a Mac to a VM](onboarding.md)
 
 The NFS backend mounts a workspace without macFUSE, SSHFS or any privilege.
 RWS itself serves the files: `rws connect` starts `rws nfs-bridge`, a small
