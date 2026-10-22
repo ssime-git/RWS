@@ -8,6 +8,7 @@ pub mod autostart;
 pub mod lifecycle;
 pub mod mount;
 pub mod nfs_bridge;
+pub mod onboarding;
 pub mod process;
 pub mod routing;
 pub mod shell_hook;

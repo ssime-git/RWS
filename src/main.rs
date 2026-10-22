@@ -26,6 +26,11 @@ enum Action {
         #[arg(long)]
         skip_integrations: bool,
     },
+    /// Guided VM onboarding: check this Mac and a VM, explain every failure.
+    Onboard {
+        #[command(subcommand)]
+        action: OnboardAction,
+    },
     /// Describe whether a filesystem directory belongs to a verified RWS mount.
     Context {
         #[arg(long)]
@@ -180,6 +185,22 @@ enum Backend {
     Fskit,
     /// Built-in localhost NFS bridge over SFTP: no macFUSE or SSHFS needed.
     Nfs,
+}
+#[derive(Subcommand)]
+enum OnboardAction {
+    /// Read-only checks of this Mac and, with --host, of a VM. Exit 1 if any
+    /// check fails; warnings do not fail it.
+    Check {
+        /// SSH destination of the VM, as USER@HOST or an SSH alias.
+        #[arg(long)]
+        host: Option<String>,
+        /// Absolute folder on the VM that will be mounted.
+        #[arg(long, requires = "host")]
+        remote: Option<String>,
+        /// Machine-readable report for the app and for agents.
+        #[arg(long)]
+        json: bool,
+    },
 }
 #[derive(Subcommand)]
 enum HookAction {
@@ -536,6 +557,25 @@ fn run_with_origin(cli: Cli, origin: OperationOrigin) -> Result<i32, String> {
         rws::nfs_bridge::serve(host, remote_root, mount, export)?;
         return Ok(0);
     }
+    // Checks run before any configuration exists, so no config is loaded.
+    if let Action::Onboard {
+        action: OnboardAction::Check { host, remote, json },
+    } = &cli.command
+    {
+        let report = rws::onboarding::run_check(host.as_deref(), remote.as_deref());
+        if *json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+            );
+        } else {
+            print!(
+                "{}",
+                rws::onboarding::format_report(&report, host.is_some())
+            );
+        }
+        return Ok(if report.ok { 0 } else { 1 });
+    }
     let explicit_config = cli.config.is_some();
     let path = match cli.config {
         Some(p) => p,
@@ -759,6 +799,7 @@ fn execute_action(
             Ok(0)
         }
         Action::Autostart { .. } => unreachable!(),
+        Action::Onboard { .. } => unreachable!(),
         Action::Context { cwd } => {
             let cwd = match cwd {
                 Some(p) => p,
