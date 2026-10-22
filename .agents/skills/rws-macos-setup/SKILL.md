@@ -62,7 +62,7 @@ For the diagnosed macOS 27/macFUSE 5.4/SSHFS 3.7.5 combination, follow `docs/ssh
 
 ## 3. Isolated workspace
 
-Select a unique workspace name and an unused mount path (`~/RWS/NAME` for NFS). Use an empty, dedicated remote directory; with user authorization, `mktemp -d /tmp/rws-test.XXXXXX` on the remote host can provide one. Record its exact returned path. Do not use a remote home directory or valuable project for write/failure tests.
+Select a unique workspace name and an unused mount path (`~/RWS/NAME` for NFS). Use an empty, dedicated remote directory; with user authorization, `mktemp -d /tmp/rws-test.XXXXXX` on the remote host can provide one. Record its exact returned path. Some hosts clear `/tmp` at boot (Alpine's `bootmisc` does) and an OrbStack machine wakes on any SSH connection, so `orbctl stop` is not a network outage and a restarted machine loses that directory; for outage or reboot tests choose a directory under the remote home and a real network cut. Do not use a remote home directory or valuable project for write/failure tests.
 
 Use the following example only after replacing the example host and path with the selected values. With the NFS backend, the mount point is a user-owned directory such as `~/RWS/setup-test`; with the legacy FSKit backend it is an unused `/Volumes/RWS-...` path.
 

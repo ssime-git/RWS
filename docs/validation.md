@@ -672,3 +672,50 @@ terminal tab, `RWS_AUTO_MODE=remote; cd ~/RWS/razer-1/DocuCoachAI` printed
 `RWS remote shell: razer@razer-1:/home/razer/Projects/DocuCoachAI` and showed
 the remote prompt. The interactive `[Y/n]` prompt in that tab was not
 exercised.
+
+## NFS bridge on a disposable second host — 2026-10-22
+
+Toolchain: Rust 1.99.1 stable reinstalled with the official rustup (SHA-256
+verified) after the old temporary toolchain vanished. Checkout at `main`
+(`fb9b726`): 156 Rust tests, `clippy -D warnings`, `cargo fmt --check`, the
+Swift suite and the development app bundle build all pass locally.
+
+Setup: OrbStack Alpine machine `rws-second@orb`, backend `nfs`, workspace
+`orb-test` mounted at `~/RWS/orb-test` over an empty `mktemp` remote
+directory. No macFUSE, no sudo, nothing installed on the host beyond OpenSSH's
+SFTP server.
+
+- **File semantics** (each verified independently over SSH): create/read,
+  Unicode and emoji names, symlinks, executable bit, editor-style atomic save
+  (Mac side), remote atomic replace visible on the Mac within 3 s, no `._*`
+  file written remotely after `xattr -w`, exit-code propagation, and
+  `scripts/test-mount-listing.py` PASS.
+- **Resilience:** killing only the bridge's `ssh` child and reading a
+  never-read file succeeded in 0 s with the child respawned; killing the bridge
+  made reads fail with `Operation timed out` after 6 s (no frozen Finder),
+  `status` reported `unresponsive mount`, `umount -f` worked without sudo in
+  1 s and left no `mount_nfs`/`umount` process; reconnecting kept all data;
+  `disconnect` made the bridge exit by itself and paused auto-reconnect while
+  preserving remote files. The zsh hook triggered inside the new `~/RWS/NAME`
+  mount root (prompt, remote shell, return to local).
+- **Durable installation** (`install --skip-integrations`, `autostart install`,
+  `launchctl bootstrap`, disposable configuration only; `.zshrc` checksum
+  unchanged): an external `diskutil unmount` with intent `connected` was
+  remounted by the LaunchAgent after about 20 s; a killed bridge was recovered
+  automatically after 57 s with a new bridge and intact data; `rws doctor`
+  reported every check `[ok]` (managed executable, 30-second schedule observed
+  in launchd, verified and responsive mount, SSH reachable).
+- **Harness lessons:** Alpine's `bootmisc` empties `/tmp` at boot and OrbStack
+  wakes a stopped machine on any SSH connection. `orbctl stop` is therefore not
+  an outage (the bridge's reconnect restarted the machine, `/tmp` vanished and
+  the bridge faithfully reported the missing remote root with `ENOENT`); when
+  the directory was recreated the live bridge recovered in under a second
+  without a remount. Outage tests need a persistent remote root and a real
+  network cut.
+
+Not covered by this entry: a real network loss or delayed Tailscale start,
+reboot/login remount, the app's GUI flow with the NFS backend, Ctrl+C and
+terminal resize in a human session, and the cutover of the real
+`razer-documents` workspace. macFUSE's runtime was already absent from this Mac
+(only two package receipts and a repository-local SSHFS build remain), so the
+legacy FSKit backend cannot mount until a backend change.
