@@ -140,10 +140,12 @@ filesystem I/O remains an underlying FSKit limitation, even with subprocess dead
 Run this **once, on the Mac**, in any directory. The agents read their
 instruction files on the Mac, so this is where the rules go. Never run it on
 the VM. Use the durable CLI that `rws install` (or opening the app) placed in
-Application Support. It picks up the canonical configuration by itself:
+Application Support, linked onto your PATH as described in
+[Put `rws` on your PATH](install.md#put-rws-on-your-path). It picks up the
+canonical configuration by itself:
 
 ```sh
-"$HOME/Library/Application Support/RWS/bin/rws" agent-rules --all
+rws agent-rules --all
 ```
 
 With a different configuration, pass both absolute paths:

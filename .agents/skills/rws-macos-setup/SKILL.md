@@ -152,6 +152,24 @@ Keep the agreed temporary grant active through the entire approved diagnosis/rep
 
 ## 6. Terminal and agent integration
 
+Put the durable CLI on PATH first. Every later command, and every agent that
+follows the installed rules, can then call `rws`. After `rws install` has
+succeeded, run this on the Mac. Do not run it on the VM, and never point the
+link at `target/` or at the app bundle:
+
+```sh
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$HOME/Library/Application Support/RWS/bin/rws" "$HOME/.local/bin/rws"
+zsh -lic 'command -v rws && rws --version && rws agent-rules --help >/dev/null'
+```
+
+If an `rws` already exists there and is not a link to the managed copy, ask
+before replacing it. If `~/.local/bin` is not on the login PATH, ask before
+adding `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc`. If
+`agent-rules` is unknown, the durable copy is older than the build: run
+`rws install` from the new build first. Record the link and the
+`command -v rws` output.
+
 After an active RWS configuration and a verified mount exist, offer the user's
 interactive zsh integration. With authorization to edit the user's zsh startup
 file, run the built RWS binary using its absolute path and bake in the active
@@ -210,7 +228,7 @@ simulating it in a non-TTY shell.
 ## Completion record
 
 Report: mount backend (NFS bridge or legacy SSHFS); versions; build/test result; SSH/shell result; mount/edit/unmount result;
-zsh-hook installation and real-terminal result; agent-rules installation (agents and
+`rws` PATH link (`command -v rws`); zsh-hook installation and real-terminal result; agent-rules installation (agents and
 files written) and Delta-terminal result; the Mac/VM choice prompt in a fresh agent turn; screenshot locations; retained test data;
 temporary-permission final state; unresolved OS blockers. Continue useful
 independent steps, but label every unverified capability. Update the setup notes

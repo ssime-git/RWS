@@ -9,7 +9,7 @@ description: Use when a person wants to connect a Mac to a remote Linux VM with 
 
 Start from a working Mac and a VM already reachable over Tailscale. RWS checks that baseline. When something is missing it says exactly what, and **the person fixes it** — you never install or configure Tailscale, SSH keys, host trust or sudo for them. Everything goes through `rws onboard`: read its output, do not re-implement its checks. The volume appears at `~/RWS/NAME` through the NFS bridge: no macFUSE, no sudo, nothing installed on the VM beyond OpenSSH's SFTP server.
 
-`rws` is `/Applications/RWS.app/Contents/Resources/bin/rws`, or `~/Library/Application Support/RWS/bin/rws` once installed durably, or `./target/debug/rws` in a checkout. Speak the person's language.
+`rws` is `/Applications/RWS.app/Contents/Resources/bin/rws`, or `~/Library/Application Support/RWS/bin/rws` once installed durably, or `./target/debug/rws` in a checkout. After a durable install, link it onto PATH (`ln -sfn "$HOME/Library/Application Support/RWS/bin/rws" "$HOME/.local/bin/rws"`, check with `zsh -lic 'command -v rws'`). Ask before replacing an existing `rws` or editing `~/.zshrc`. Speak the person's language.
 
 ## Procedure
 

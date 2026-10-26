@@ -30,6 +30,26 @@ With the legacy macFUSE backend, its
 privileged helper must be approved once from a real GUI terminal; a
 LaunchAgent cannot show that prompt. The NFS bridge needs no approval.
 
+### Put `rws` on your PATH
+
+The durable install does not change your PATH. Link the managed executable into
+a directory that is already on it, so that you, your terminals and your agents
+can type `rws`. `~/.local/bin` is the usual choice:
+
+```sh
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$HOME/Library/Application Support/RWS/bin/rws" "$HOME/.local/bin/rws"
+zsh -lic 'command -v rws && rws agent-rules --help >/dev/null && echo ok'
+```
+
+Point the link at the managed copy, never at a checkout's `target/` build or at
+the app bundle. Each later `rws install`, and each relaunch of an updated app,
+replaces that file in place, so the link keeps working with no further action. If
+`command -v rws` prints nothing, `~/.local/bin` is not on your PATH. Add
+`export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc`, or link into another PATH
+directory that you own. Without a `--config` option, `rws` uses the canonical
+configuration in Application Support.
+
 ### Activate now and verify
 
 The agent is automatically loaded at the next macOS login. To activate it without
@@ -56,11 +76,12 @@ If the service is absent, rerun the two durable-install commands above. With the
 legacy backend, a failed mount does not establish that macFUSE can display a
 privilege prompt: approve its helper once in a GUI terminal, then let Launchd retry.
 
-Enable the zsh hook and the agent rules manually after installation, using the managed executable:
+Enable the zsh hook and the agent rules manually after installation. Run them
+on the Mac, using the managed executable (`rws` once it is on your PATH):
 
 ```sh
-"$HOME/Library/Application Support/RWS/bin/rws" hook install
-"$HOME/Library/Application Support/RWS/bin/rws" agent-rules --all
+rws hook install
+rws agent-rules --all
 ```
 
 These commands explicitly enable the integrations. Later `rws install` runs
