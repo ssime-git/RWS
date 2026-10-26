@@ -36,7 +36,31 @@ enum Action {
         #[arg(long)]
         cwd: Option<PathBuf>,
     },
-    /// Install conditional forwarding rules in Delta's personal instructions.
+    /// Remember for 24h whether agents run commands on this Mac or on the VM.
+    Choice {
+        #[command(subcommand)]
+        action: ChoiceAction,
+    },
+    /// Install the RWS execution rules in coding agents' personal instructions.
+    AgentRules {
+        /// Agent to configure (repeatable): claude, codex, pi, cline, devin, delta.
+        #[arg(long = "agent", value_name = "NAME", value_parser = parse_agent)]
+        agents: Vec<rws::agent_rules::Agent>,
+        /// Every known agent whose configuration directory exists.
+        #[arg(long, conflicts_with = "agents")]
+        all: bool,
+        /// Rules file to manage instead of the agent's default (one --agent only).
+        #[arg(long, conflicts_with = "all")]
+        target: Option<PathBuf>,
+        /// Only refresh rules that already exist; never install them anew.
+        #[arg(long)]
+        if_installed: bool,
+        /// Print each known agent's rules path and state as JSON.
+        #[arg(long, conflicts_with_all = ["agents", "all", "target", "if_installed"])]
+        list: bool,
+    },
+    /// Install conditional forwarding rules in Delta's personal instructions
+    /// (alias of `agent-rules --agent delta`).
     DeltaRules {
         #[arg(long)]
         output: Option<PathBuf>,
@@ -241,6 +265,36 @@ enum HookAction {
     },
 }
 #[derive(Subcommand)]
+enum ChoiceAction {
+    /// Record where commands run for the workspace containing PATH.
+    Set {
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long, value_enum)]
+        mode: ChoiceMode,
+    },
+    /// Print the workspace's unexpired choice as JSON (null when absent).
+    Get {
+        #[arg(long)]
+        cwd: PathBuf,
+    },
+    /// Forget the workspace's choice so agents ask again.
+    Clear {
+        #[arg(long)]
+        cwd: PathBuf,
+    },
+}
+#[derive(Clone, Copy, ValueEnum)]
+enum ChoiceMode {
+    /// Run commands on this Mac.
+    Local,
+    /// Run commands on the workspace's VM.
+    Remote,
+}
+fn parse_agent(value: &str) -> Result<rws::agent_rules::Agent, String> {
+    value.parse()
+}
+#[derive(Subcommand)]
 enum AutostartAction {
     /// Write the generic LaunchAgent for the durable installation.
     Install {
@@ -437,6 +491,106 @@ fn resolve(config: &Config, name: Option<&str>) -> Result<(Workspace, String), S
         );
     }
     Ok(matches.into_iter().next().unwrap())
+}
+fn agent_rules(
+    path: &std::path::Path,
+    agents: Vec<rws::agent_rules::Agent>,
+    all: bool,
+    target: Option<PathBuf>,
+    if_installed: bool,
+    list: bool,
+) -> Result<i32, String> {
+    use rws::agent_rules::{Agent, managed_block_present};
+    if list {
+        let mut rows = Vec::new();
+        for agent in Agent::ALL {
+            let target = agent.default_rules_path();
+            let installed = match &target {
+                Ok(target) => managed_block_present(target).ok(),
+                Err(_) => None,
+            };
+            rows.push(serde_json::json!({
+                "agent": agent.name(),
+                "label": agent.label(),
+                "detected": agent.detected()?,
+                "path": target.as_ref().ok(),
+                "error": target.as_ref().err(),
+                "installed": installed,
+            }));
+        }
+        println!("{}", serde_json::Value::Array(rows));
+        return Ok(0);
+    }
+    if target.is_some() && agents.len() != 1 {
+        return Err("--target requires exactly one --agent".into());
+    }
+    if !all {
+        if agents.is_empty() {
+            return Err("choose --agent NAME (repeatable), --all, or --list".into());
+        }
+        for agent in agents {
+            install_agent_rules(path, agent, target.clone(), if_installed)?;
+        }
+        return Ok(0);
+    }
+    for agent in Agent::ALL {
+        if !agent.detected()? {
+            let dirs: Vec<_> = agent
+                .config_dirs()?
+                .iter()
+                .map(|d| d.display().to_string())
+                .collect();
+            println!(
+                "Skipped {}: no configuration directory ({})",
+                agent.name(),
+                dirs.join(", ")
+            );
+            continue;
+        }
+        install_agent_rules(path, agent, None, if_installed)?;
+    }
+    Ok(0)
+}
+fn install_agent_rules(
+    path: &std::path::Path,
+    agent: rws::agent_rules::Agent,
+    target: Option<PathBuf>,
+    if_installed: bool,
+) -> Result<i32, String> {
+    let target = match target {
+        Some(p) => p,
+        None => agent.default_rules_path()?,
+    };
+    if if_installed && !rws::agent_rules::managed_block_present(&target)? {
+        println!(
+            "No RWS rules in {}; nothing refreshed. Run agent-rules --agent {} without --if-installed to install them.",
+            target.display(),
+            agent.name()
+        );
+        return Ok(0);
+    }
+    let config = path
+        .canonicalize()
+        .map_err(|e| format!("config path: {e}"))?;
+    if if_installed && !maintenance::rules_for_configuration(&target, &config)? {
+        println!(
+            "Custom {} configuration preserved; nothing refreshed.",
+            agent.label()
+        );
+        return Ok(0);
+    }
+    let binary = std::env::current_exe().map_err(|e| e.to_string())?;
+    rws::agent_rules::install_as(&config, &binary, &target, agent.name())?;
+    println!(
+        "Global {} RWS rules installed in {}",
+        agent.label(),
+        target.display()
+    );
+    println!(
+        "Rules guide agent commands; they do not intercept {}'s internal processes.",
+        agent.label()
+    );
+    Ok(0)
 }
 fn require_verified_mount(
     config_path: &std::path::Path,
@@ -781,6 +935,7 @@ fn run_with_origin(cli: Cli, origin: OperationOrigin) -> Result<i32, String> {
     let strict_routing = matches!(
         &cli.command,
         Action::Context { .. }
+            | Action::Choice { .. }
             | Action::Exec { cwd: Some(_), .. }
             | Action::Exec {
                 git_context: true,
@@ -876,7 +1031,7 @@ fn execute_action(
             if !skip_integrations {
                 maintenance::refresh_integrations(&layout.config_path())?;
                 println!(
-                    "Existing managed shell and Delta integrations refreshed to {}. New integrations remain opt-in (hook install / delta-rules).",
+                    "Existing managed shell and agent-rule integrations refreshed to {}. New integrations remain opt-in (hook install / agent-rules).",
                     installed.rws.display()
                 );
             }
@@ -885,31 +1040,46 @@ fn execute_action(
         Action::DeltaRules {
             output,
             if_installed,
-        } => {
-            let target = match output {
-                Some(p) => p,
-                None => rws::agent_rules::default_delta_rules_path()?,
+        } => install_agent_rules(path, rws::agent_rules::Agent::Delta, output, if_installed),
+        Action::AgentRules {
+            agents,
+            all,
+            target,
+            if_installed,
+            list,
+        } => agent_rules(path, agents, all, target, if_installed, list),
+        Action::Choice { action } => {
+            let (cwd, mode) = match &action {
+                ChoiceAction::Set { cwd, mode } => (cwd, Some(*mode)),
+                ChoiceAction::Get { cwd } | ChoiceAction::Clear { cwd } => (cwd, None),
             };
-            if if_installed && !rws::agent_rules::managed_block_present(&target)? {
-                println!(
-                    "No RWS rules in {}; nothing refreshed. Run delta-rules without --if-installed to install them.",
-                    target.display()
-                );
-                return Ok(0);
+            let (w, _) = rws::routing::resolve_directory(&config, cwd)?.ok_or_else(|| {
+                format!(
+                    "{} is not inside a registered RWS mount; no execution choice applies",
+                    cwd.display()
+                )
+            })?;
+            match action {
+                ChoiceAction::Set { .. } => {
+                    let mode = match mode {
+                        Some(ChoiceMode::Remote) => rws::exec_choice::Mode::Remote,
+                        _ => rws::exec_choice::Mode::Local,
+                    };
+                    let choice = rws::exec_choice::set(path, &w.name, mode)?;
+                    println!("{}", rws::exec_choice::describe(&w, Some(choice)));
+                }
+                ChoiceAction::Get { .. } => {
+                    let choice = rws::exec_choice::get(path, &w.name)?;
+                    println!("{}", rws::exec_choice::describe(&w, choice));
+                }
+                ChoiceAction::Clear { .. } => {
+                    let cleared = rws::exec_choice::clear(path, &w.name)?;
+                    println!(
+                        "{}",
+                        serde_json::json!({"workspace":w.name,"cleared":cleared})
+                    );
+                }
             }
-            let config = path
-                .canonicalize()
-                .map_err(|e| format!("config path: {e}"))?;
-            if if_installed && !maintenance::rules_for_configuration(&target, &config)? {
-                println!("Custom Delta configuration preserved; nothing refreshed.");
-                return Ok(0);
-            }
-            let binary = std::env::current_exe().map_err(|e| e.to_string())?;
-            rws::agent_rules::install(&config, &binary, &target)?;
-            println!("Global Delta RWS rules installed in {}", target.display());
-            println!(
-                "Rules guide agent commands; they do not intercept Delta's internal processes."
-            );
             Ok(0)
         }
         Action::Autostart { .. } => unreachable!(),
@@ -923,9 +1093,10 @@ fn execute_action(
                 None => println!("{}", serde_json::json!({"mode":"local","cwd":cwd})),
                 Some((w, remote)) => {
                     require_verified_mount(path, &config, &w)?;
+                    let choice = rws::exec_choice::get(path, &w.name)?;
                     println!(
                         "{}",
-                        serde_json::json!({"mode":"remote","workspace":w.name,"host":w.host,"cwd":cwd,"remote_cwd":remote,"mount_verified":true})
+                        rws::exec_choice::remote_context(&w, &cwd, &remote, choice)
                     );
                 }
             }

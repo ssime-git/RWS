@@ -316,10 +316,19 @@ pub(super) fn refresh_integrations(path: &Path) -> Result<(), String> {
     if managed.iter().all(|line| manages_configuration(line, path)) {
         rws::shell_hook::refresh_existing(&zshrc, &binary, Some(path))?;
     }
-    let target = rws::agent_rules::default_delta_rules_path()?;
-    if rws::agent_rules::managed_block_present(&target)? && rules_for_configuration(&target, path)?
-    {
-        rws::agent_rules::install(path, &binary, &target)?;
+    // Refresh every known agent's rules file that already carries the block.
+    let mut seen = Vec::new();
+    for agent in rws::agent_rules::Agent::ALL {
+        let target = agent.default_rules_path()?;
+        if seen.contains(&target) {
+            continue;
+        }
+        if rws::agent_rules::managed_block_present(&target)?
+            && rules_for_configuration(&target, path)?
+        {
+            rws::agent_rules::install_as(path, &binary, &target, agent.name())?;
+        }
+        seen.push(target);
     }
     refresh_launch_agent()?;
     Ok(())

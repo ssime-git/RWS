@@ -42,6 +42,157 @@ pub fn default_delta_rules_path() -> Result<PathBuf, String> {
     )
 }
 
+/// Coding agents whose personal (global) rule files RWS knows how to manage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Agent {
+    Claude,
+    Codex,
+    Pi,
+    Cline,
+    Devin,
+    Delta,
+}
+
+impl Agent {
+    pub const ALL: [Agent; 6] = [
+        Agent::Claude,
+        Agent::Codex,
+        Agent::Pi,
+        Agent::Cline,
+        Agent::Devin,
+        Agent::Delta,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Agent::Claude => "claude",
+            Agent::Codex => "codex",
+            Agent::Pi => "pi",
+            Agent::Cline => "cline",
+            Agent::Devin => "devin",
+            Agent::Delta => "delta",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Agent::Claude => "Claude Code",
+            Agent::Codex => "Codex",
+            Agent::Pi => "pi",
+            Agent::Cline => "Cline",
+            Agent::Devin => "Devin CLI",
+            Agent::Delta => "Delta",
+        }
+    }
+
+    /// Directories whose existence shows the agent is set up on this machine.
+    pub fn config_dirs(self) -> Result<Vec<PathBuf>, String> {
+        let home = home()?;
+        Ok(match self {
+            Agent::Claude => vec![env_dir("CLAUDE_CONFIG_DIR")?.unwrap_or(home.join(".claude"))],
+            Agent::Codex => vec![env_dir("CODEX_HOME")?.unwrap_or(home.join(".codex"))],
+            Agent::Pi => vec![env_dir("PI_CODING_AGENT_DIR")?.unwrap_or(home.join(".pi/agent"))],
+            Agent::Cline => vec![
+                env_dir("CLINE_DIR")?.unwrap_or(home.join(".cline")),
+                home.join("Documents/Cline"),
+            ],
+            Agent::Devin => vec![home.join(".config/devin")],
+            Agent::Delta => match env_dir("DELTA_CONFIG_DIR")? {
+                Some(directory) => vec![directory],
+                None => vec![
+                    home.join(".config/delta"),
+                    home.join("Library/Application Support/delta"),
+                ],
+            },
+        })
+    }
+
+    pub fn detected(self) -> Result<bool, String> {
+        Ok(self.config_dirs()?.iter().any(|d| d.is_dir()))
+    }
+
+    /// The personal rules file this agent actually loads, or its default new file.
+    pub fn default_rules_path(self) -> Result<PathBuf, String> {
+        let directory = || -> Result<PathBuf, String> { Ok(self.config_dirs()?.remove(0)) };
+        match self {
+            Agent::Claude => Ok(directory()?.join("CLAUDE.md")),
+            // Codex reads AGENTS.override.md instead of AGENTS.md when present.
+            Agent::Codex => {
+                first_existing(&directory()?, &["AGENTS.override.md"], "AGENTS.md", true)
+            }
+            // pi loads the first existing file of this list from its agent directory.
+            Agent::Pi => first_existing(
+                &directory()?,
+                &[
+                    "AGENTS.override.md",
+                    "AGENTS.md",
+                    "AGENTS.MD",
+                    "CLAUDE.md",
+                    "CLAUDE.MD",
+                ],
+                "AGENTS.md",
+                false,
+            ),
+            // A dedicated file in Cline's global rules directory.
+            Agent::Cline => Ok(home()?.join("Documents/Cline/Rules/rws-remote-execution.md")),
+            Agent::Devin => {
+                first_existing(&directory()?, &["AGENTS.md", "AGENT.md"], "AGENTS.md", true)
+            }
+            Agent::Delta => default_delta_rules_path(),
+        }
+    }
+}
+
+impl std::str::FromStr for Agent {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, String> {
+        Agent::ALL
+            .into_iter()
+            .find(|agent| agent.name() == value)
+            .ok_or_else(|| {
+                let names: Vec<_> = Agent::ALL.iter().map(|a| a.name()).collect();
+                format!(
+                    "unknown agent {value:?}; known agents: {}",
+                    names.join(", ")
+                )
+            })
+    }
+}
+
+fn home() -> Result<PathBuf, String> {
+    Ok(PathBuf::from(
+        std::env::var_os("HOME").ok_or("HOME is not set")?,
+    ))
+}
+
+fn env_dir(name: &str) -> Result<Option<PathBuf>, String> {
+    match std::env::var_os(name) {
+        Some(value) if value.is_empty() => Err(format!("{name} is empty")),
+        Some(value) => Ok(Some(PathBuf::from(value))),
+        None => Ok(None),
+    }
+}
+
+/// Pick the first candidate file present (non-empty when `nonempty`), else `default`.
+fn first_existing(
+    directory: &Path,
+    candidates: &[&str],
+    default: &str,
+    nonempty: bool,
+) -> Result<PathBuf, String> {
+    for name in candidates {
+        let candidate = directory.join(name);
+        match fs::read_to_string(&candidate) {
+            Ok(contents) if !nonempty || !contents.trim().is_empty() => return Ok(candidate),
+            Ok(_) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) if error.kind() == std::io::ErrorKind::IsADirectory => (),
+            Err(error) => return Err(format!("read {}: {error}", candidate.display())),
+        }
+    }
+    Ok(directory.join(default))
+}
+
 fn choose_path(primary: &Path, fallback: Option<&Path>) -> Result<PathBuf, String> {
     for directory in std::iter::once(primary).chain(fallback) {
         for name in ["AGENT.md", "AGENTS.md"] {
@@ -76,23 +227,40 @@ fn managed_rules(config: &Path, binary: &Path) -> Result<String, String> {
     );
     Ok(format!(
         r#"{BEGIN}
-## RWS remote execution — all registered projects
+## RWS execution routing — all registered projects
 
-Before the first terminal command in every task, and whenever the terminal checkout or project changes, discover its actual absolute filesystem path locally:
+These rules apply to any coding agent that reads them. Before the first terminal command in every task, and whenever the terminal checkout or project changes, discover its actual absolute filesystem path locally:
 
 ```sh
 checkout=$(pwd -P)
 ```
 
-Do not ask the user to identify the machine when this local probe is available. If it fails or the conversation has no checkout, report that exact condition and ask the user to attach an existing checkout; do not infer a machine or use a previous path. Use `$checkout` in the context check:
+If this probe fails or the conversation has no checkout, report that exact condition and ask the user to attach an existing checkout; do not infer a machine or use a previous path. Use `$checkout` in the context check:
 
 ```sh
 {command} context --cwd "$checkout"
 ```
 
-Read this command's JSON `mode`. This context check runs locally; it does not forward a workload. A `worktree://` URI is not a filesystem path. Never infer routing from a project name, a previous task, or an earlier checkout. If context fails, is unknown, or the mounted path is inaccessible, stop and report the error. Do not proceed locally as a fallback.
+Read this command's JSON `mode`, `host`, `choice`, and `choice_expires_at`. This context check runs locally; it does not forward a workload. A `worktree://` URI is not a filesystem path. Never infer the machine or the routing from a path, a project name, a previous task, or an earlier checkout. If context fails, is unknown, or the mounted path is inaccessible, stop and report the error. Do not proceed locally as a fallback.
 
-For `mode: remote`, route EVERY agent shell workload through:
+### `mode: local`
+
+Continue the ordinary local workflow and repeat the context check on checkout or project changes.
+
+### `mode: remote` and `choice: null`
+
+The checkout is inside a registered RWS mount and no current execution choice exists. STOP before any shell workload and ask the user exactly one question: should commands run on this Mac, or on the VM named by the JSON `host`? Name that host in the question. Wait for the answer, then record it with the matching command, re-run the context check, and follow its section:
+
+```sh
+{command} choice set --cwd "$checkout" --mode local
+{command} choice set --cwd "$checkout" --mode remote
+```
+
+The choice covers the whole workspace for 24 hours (`choice_expires_at`, Unix seconds). Do not ask again while it is current; once context reports `choice: null` again, ask again. The user can switch at any time by saying so: then run `choice set` with the other mode, re-run the context check, and follow the new section.
+
+### `mode: remote` and `choice: remote`
+
+Route EVERY agent shell workload through:
 
 ```sh
 {command} exec --cwd "$checkout" --git-context -- sh -c 'entire remote script'
@@ -104,9 +272,13 @@ For the first remote workload, run `uname -s; hostname; pwd` through this wrappe
 
 `--git-context` supplies Git metadata only for the current repository. Do not change into another repository or use `git -C` to target another repository within the same invocation. Resolve that repository's actual absolute checkout with a new context check and a new wrapper invocation. Network Git remotes may be used. Mac-local Git remote URL prefixes under the same registered mount are translated through Git `url.insteadOf`; paths under other mounts or outside registered mounts are not automatically mapped.
 
-After any routing, mount, or SSH failure, stop and report it. Never retry the workload locally. For `mode: local`, continue the ordinary local workflow and repeat the context check on checkout or project changes.
+After any routing, mount, or SSH failure, stop and report it. Never retry the workload locally.
 
-These personal rules guide agent-issued commands across all registered RWS projects. They do not move Delta's internal automatic preparation or Git operations to Linux and are not a security boundary.
+### `mode: remote` and `choice: local`
+
+The user chose to run commands on this Mac. Run them locally in `$checkout` without the wrapper. The files are served from the VM over the RWS mount: file access is slower than a local disk, and anything you create (build output, virtual environments, caches) is written to the VM's workspace. Use Mac tools and keep any macOS environment separate from a Linux one such as `.venv-rws`. If the mounted path becomes inaccessible, stop and report it.
+
+These personal rules guide agent-issued commands across all registered RWS projects. They do not move an agent application's own internal processes (such as automatic preparation or Git operations) to Linux and are not a security boundary.
 {END}"#
     ))
 }
@@ -164,7 +336,6 @@ fn exclusive_file(directory: &Path, prefix: &str, contents: &[u8]) -> Result<Pat
     Err("could not reserve a unique rules file".into())
 }
 
-/// Preserve custom rules, back up changed existing content, and atomically install private rules.
 /// Whether the target already carries an RWS-managed rules block.
 pub fn managed_block_present(target: &Path) -> Result<bool, String> {
     match fs::read_to_string(target) {
@@ -174,7 +345,14 @@ pub fn managed_block_present(target: &Path) -> Result<bool, String> {
     }
 }
 
+/// Install Delta's rules (kept for the original `delta-rules` entry point).
 pub fn install(config: &Path, binary: &Path, target: &Path) -> Result<(), String> {
+    install_as(config, binary, target, Agent::Delta.name())
+}
+
+/// Preserve custom rules, back up changed existing content, and atomically install private rules.
+/// `label` names the backup so files from different agents stay distinguishable.
+pub fn install_as(config: &Path, binary: &Path, target: &Path, label: &str) -> Result<(), String> {
     let block = managed_rules(config, binary)?;
     quoted_absolute(target)?;
     let existing = match fs::symlink_metadata(target) {
@@ -198,7 +376,7 @@ pub fn install(config: &Path, binary: &Path, target: &Path) -> Result<(), String
             .ok_or("config must have a parent directory")?
             .join("agent-rule-backups");
         fs::create_dir_all(&backups).map_err(|e| format!("create rules backup directory: {e}"))?;
-        exclusive_file(&backups, "delta-rules", original.as_bytes())?;
+        exclusive_file(&backups, &format!("{label}-rules"), original.as_bytes())?;
     }
     let parent = target
         .parent()
@@ -227,7 +405,7 @@ mod tests {
         install(&config, &binary, &target).unwrap();
         assert!(references_current(&config, &binary, &target).unwrap());
         let current = fs::read_to_string(&target).unwrap();
-        fs::write(&target, current.replace("route EVERY", "route SOME")).unwrap();
+        fs::write(&target, current.replace("Route EVERY", "Route SOME")).unwrap();
         assert!(!references_current(&config, &binary, &target).unwrap());
         fs::write(&target, format!("{current}\n{BEGIN}")).unwrap();
         assert!(references_current(&config, &binary, &target).is_err());
@@ -257,7 +435,11 @@ mod tests {
         assert_eq!(first.matches(BEGIN).count(), 1);
         assert!(first.contains("rws binary'\\''s' --config '"));
         assert!(first.contains("pwd -P"));
-        assert!(first.contains("Do not ask the user to identify the machine"));
+        assert!(!first.contains("Do not ask the user to identify the machine"));
+        assert!(first.contains("ask the user exactly one question"));
+        assert!(first.contains("choice set --cwd \"$checkout\" --mode remote"));
+        assert!(first.contains("24 hours"));
+        assert!(!first.contains("Delta"));
         assert!(first.contains("context --cwd"));
         assert!(first.contains("--git-context -- sh -c"));
         assert_eq!(

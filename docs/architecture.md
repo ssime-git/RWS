@@ -87,7 +87,7 @@ fallback is documented. The CLI alone does not manage Finder favorites.
 | `rws exec --workspace demo -- …` | Literal argv → quoted remote command → SSH | Remote workspace root |
 | `rws exec --cwd … --git-context -- …` / `rws agent --cwd …` | Verified path and Git mapping → SSH | Corresponding remote directory (exact subdirectory) |
 | `rws shell` | SSH PTY → remote login shell | Mapped current directory, or explicit workspace root |
-| Current Delta rules | Agent instructed to invoke RWS explicitly | Mapped checkout; native Delta processes remain local |
+| Agent rules installed by `rws agent-rules` (Claude Code, Codex, pi, Cline, Devin CLI, Delta) | Agent instructed to invoke RWS explicitly; asks Mac or VM once per workspace, remembered 24 h (`rws choice`) | Mapped checkout; the agent's own native processes remain local |
 | Interactive zsh with `eval "$(rws hook zsh)"` | `cd` into verified mount → `rws context` check → `[Y/n]` prompt (answer kept per shell) → `rws shell` over SSH | Mapped remote directory |
 | Ordinary terminal without the hook `cd ~/RWS/demo` | No RWS execution integration | Local shell in a remotely backed filesystem |
 
@@ -97,9 +97,9 @@ agent CLIs outside SSH's default noninteractive PATH. Arguments are quoted as
 literals. Failed SSH or a missing remote executable does not trigger local fallback.
 Remote shell support currently assumes POSIX-compatible login-shell semantics.
 
-The [Delta workflow](connection.md#delta-and-linux-commands) is a convention followed
-by the agent. It is not enforcement for every terminal, Git helper, preparation
-step or subprocess created by Delta.
+The [agent rules](connection.md#agent-rules-and-linux-commands) are a convention followed
+by the agent. They are not enforcement for every terminal, Git helper, preparation
+step or subprocess created by the agent application.
 
 ## 4. Code map
 
@@ -145,7 +145,7 @@ write rules. Keep this invariant when adding integrations.
 | File | First installation | Automatic behavior at app startup |
 | --- | --- | --- |
 | `~/.zshrc` (marked eval line) | Automatic once a configuration is active — the shell hook is RWS's own feature on a machine whose user installed RWS | `hook install` rewrites the single marked line with the current bundle/config paths (`installShellHook` preference opts out) |
-| Delta's `AGENT.md` (marked block) | **Never automatic.** Another application's configuration is only written on an explicit action: the app button or `rws delta-rules` | `delta-rules --if-installed` rewrites an **existing** block's paths and does nothing when no block is present (`refreshDeltaRules` preference opts out) |
+| Personal rules of each coding agent (marked block in its own `AGENT.md`, `AGENTS.md` or `CLAUDE.md`) | **Never automatic.** Another application's configuration is only written on an explicit action: the app button or `rws agent-rules --agent NAME` | `agent-rules --all --if-installed` rewrites each **existing** block's paths and does nothing for a file without a block (`refreshDeltaRules` preference opts out) |
 
 Consequence developers must preserve: removing or renaming `AGENT.md` is an
 uninstall the app respects — no startup path may recreate it. Removing the
@@ -172,7 +172,8 @@ documented decision instead of a silent scope reduction.
 | --- | --- | --- |
 | Interactive zsh terminal (any emulator), `cd` or opened in the mount | chpwd/startup hook → `rws context` → `[Y/n]` prompt, per-shell memory → `rws shell` | Covered, prompt-based (measured; #3 closed) |
 | Delta integrated interactive terminals | Same hook — Delta starts the login zsh | Covered without agent cooperation (measured) |
-| Delta agent command tool (noninteractive `/bin/sh -c`) | No external interception point exists | Feasibility decision: instruction rules (`rws delta-rules`) remain the mechanism; `RWS_AUTO_MODE` is the env contract (#2 closed) |
+| Delta agent command tool (noninteractive `/bin/sh -c`) | No external interception point exists | Feasibility decision: instruction rules (`rws agent-rules`) remain the mechanism; `RWS_AUTO_MODE` is the env contract (#2 closed) |
+| Other agents' command tools (Claude Code, Codex, pi, Cline, Devin CLI) | Same kind of instruction rules, with a Mac/VM choice remembered 24 h per workspace (`rws choice`). Their shells were not measured | Not validated end to end for any agent yet; see [connection](connection.md#agent-rules-and-linux-commands) |
 | App agent launcher | Explicit `rws agent` over SSH (VM) or local run in the mount, both exporting `RWS_AUTO_MODE` | Covered, explicit choice |
 | Scripts, IDE-internal/native subprocesses, non-zsh shells | Deliberately untouched: no TTY → no prompt, no switch | Out of scope by design; explicit RWS commands apply |
 | Delta worktree preparation, direnv, native Git operations | Delta-internal, before any RWS entry point | Not interceptable; documented limit |

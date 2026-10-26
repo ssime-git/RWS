@@ -71,7 +71,7 @@ also cover Linux-created Git metadata and selection of another registered host.
 Delta was not running/accessible through the UI tool at verification time. Thus
 rule installation and the relay are validated, but a Delta agent turn obeying
 the installed rule remains unverified. Its internal automatic setup/native Git
-processes are not intercepted. See [global rules and limits](connection.md#install-one-rule-for-every-registered-project).
+processes are not intercepted. See [global rules and limits](connection.md#agent-rules-and-linux-commands).
 
 This table supersedes unresolved statements in the historical investigation sections below. The current required experimental binary is `3.7.5-rws-fskit3`.
 
@@ -794,3 +794,22 @@ exercised on this Mac, the real razer VM and the OrbStack machine.
 
 Not covered: onboarding a host that is not on Tailscale, a VM with a non-OpenSSH
 SFTP server, non-Linux VMs, and the app assistant used by a person.
+
+## Agent rules and Mac/VM choice — 2026-10-26
+
+Implemented: `rws agent-rules` for Claude Code, Codex, pi, Cline, Devin CLI and
+Delta (`--all`, `--agent`, `--target`, `--list`, `--if-installed`); `rws delta-rules`
+remains an alias. `rws choice set|get|clear` stores a 24-hour choice per workspace in
+`exec-choices.json` next to the configuration. `rws context` reports `choice` and
+`choice_expires_at` for mounted folders. The app's startup refresh now runs
+`agent-rules --all --if-installed`, which still skips any file without the block.
+
+Checks: `cargo test --locked` passed in every test binary (166 tests).
+`swift build` did not reach the changed Swift code: `ContentView.swift` fails in the
+SwiftUI macro plugin (`SwiftUIMacros` not found) with the Command Line Tools
+toolchain, so `swift test` was not run. The three edited Swift files pass `swiftc -parse`.
+
+Not validated end to end: no live agent session has been run to confirm that an
+agent asks the Mac/VM question, follows the stored choice, or routes its command tool
+through `rws exec`. The Delta measurements of 2026-09-20 used the earlier rules text.
+||||||| 9f4094c

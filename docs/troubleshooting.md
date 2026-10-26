@@ -18,6 +18,9 @@ remove real usernames, hosts, paths and tokens before sharing them in an issue.
 | Mounted path opens but favorite fails | Is this the current mount? | Reopen via RWS to renew the favorite. Use the [manual fallback](finder-macos.md) if pinning reports an error. |
 | Favorite fails while disconnected | Mount status | Reconnect from RWS first; a favorite is not an auto-mount shortcut. |
 | Commands show Darwin/local tools | How was the command started? | Ordinary terminals/IDE processes remain local. Use **Lancer sur la VM** or explicit RWS SSH commands. Automatic routing is still [#1–3](https://github.com/ssime-git/RWS/issues/1). |
+| Agent asks Mac or VM again in a mounted folder | `rws choice get --cwd /absolute/checkout` | Expected: a choice lasts 24 hours per workspace, then expires (`choice_expires_at`). |
+| Agent ran commands on the Mac after you chose the VM, or the reverse | `rws choice get --cwd /absolute/checkout` shows the stored mode | Run `rws choice set --cwd … --mode remote` (or `local`), or `rws choice clear --cwd …` so the agent asks again. |
+| Agent has no RWS rules | `rws agent-rules --list` | Run `rws agent-rules --all`, or `--agent NAME` for an agent whose configuration directory exists. Agents without one are reported as skipped. |
 | Agent not found on VM | Agent executable in remote login environment | Install/configure it remotely or use its absolute remote path. No local fallback occurs. |
 | Adding a VM fails at **Vérifier** or `rws onboard check` | The `FAIL` line and its `code` | Run the fix printed under it; the table in [Connect a Mac to a VM](onboarding.md#fixing-a-failure) covers every code (key denied, unknown or changed host key, Tailscale off or refusing the user, SFTP missing, folder missing or read-only). Nothing is changed until all checks pass. |
 | `rws onboard add` refuses an existing name or a legacy configuration | The message names the conflict | Pick another name, or switch the backend with `rws settings --backend nfs` after disconnecting its workspaces; re-running with identical settings is safe. |
@@ -49,11 +52,11 @@ as `report_path` in JSON). A separate `.before.json` snapshot is synced before
 mutation and never overwritten, preserving evidence even if repair fails.
 Reports include local paths, workspace names and SSH output: review before sharing.
 
-Without `--mounts`, repair only reconciles existing managed shell/Delta rules
+Without `--mounts`, repair only reconciles existing managed shell and agent rules
 and the recognized RWS LaunchAgent. It preserves custom configurations, disabled
 hooks, user text and unrelated launch agents. Duplicate active hooks require an
 explicit choice: keep exactly one managed line, then retry. New integration
-enablement stays explicit (`hook install`, `delta-rules`, `autostart install`).
+enablement stays explicit (`hook install`, `agent-rules`, `autostart install`).
 
 With `--mounts`, repair attempts disconnected or verified unresponsive volumes
 only when SSH is reachable. Unknown mounts are refused; healthy mounts are left

@@ -38,8 +38,11 @@ Then, from the repository root:
 
 Use the configured workspace name if you changed `documents`. Shortcuts refuse
 to overwrite existing files: choose a new directory when regenerating them.
-For Delta, install the global rule with `delta-rules` using the same absolute
-binary/config paths, then follow the [checkout procedure](../docs/connection.md#choose-a-checkout-inside-the-mount).
+For coding agents (Claude Code, Codex, pi, Cline, Devin CLI, Delta), install the
+global rules with `agent-rules --all` using the same absolute binary/config paths,
+then follow the [checkout procedure](../docs/connection.md#choose-a-checkout-inside-the-mount).
+In a mounted folder the agent asks once whether to run on the Mac or the VM and
+remembers the answer for 24 hours ([details](../docs/connection.md#choose-mac-or-vm-for-a-mounted-folder)).
 
 Generate binaries, shortcuts, mount receipts and logs on each machine; do not
 copy them into this template. A receipt must verify the current mount, and

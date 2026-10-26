@@ -77,14 +77,17 @@ An editor extension without a CLI needs its own integration.
 | Native macOS app; register/connect/disconnect spaces | Automatic switch for non-zsh shells, scripts and IDE-internal processes (by design) |
 | Guided VM onboarding: checks, exact fixes, NFS mount (`rws onboard`) | Signed, notarized public release |
 | Opt-in zsh hook: `cd` into a verified mount offers the remote shell | |
-| Generic remote agent launcher and explicit SSH commands | General redirection of Delta's native processes |
+| Generic remote agent launcher and explicit SSH commands | General redirection of agents' native processes |
+| Agent rules for six coding agents, with a 24-hour Mac/VM choice per workspace | Validated end-to-end agent routing |
 | Config/dependency discovery and actionable errors | Zero-setup installation on a clean Mac |
 | Finder pinning with bookmark renewal and manual fallback | Sessions surviving disconnects and cross-device reattachment |
 | Build CI, local bundle replacement and release pipeline | Signed public release and validated user auto-updates |
 
-The existing Delta integration uses personal agent instructions. A tested Delta
-workflow is available in the [Delta guide](docs/connection.md#delta-and-linux-commands);
-it is not equivalent to native remote execution without instructions.
+`rws agent-rules` installs personal instructions for Claude Code, Codex, pi, Cline,
+Devin CLI and Delta. In a mounted folder, the agent asks once whether commands run on
+the Mac or on the VM, and remembers the answer for 24 hours (`rws choice`). These
+rules are instructions, not enforcement, and they are not yet validated end to end.
+See the [agent rules guide](docs/connection.md#agent-rules-and-linux-commands).
 
 ### Persistent mounts on macOS
 

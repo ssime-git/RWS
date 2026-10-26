@@ -103,8 +103,8 @@ ever stays dead, `rws repair --workspace demo --mounts` ejects and remounts it
 Neither is installed by onboarding; both are explicit:
 
 ```sh
-rws hook install     # zsh: a [Y/n] prompt to switch into the VM when a shell enters the mount
-rws delta-rules      # Delta: rules that route agent commands to the VM
+rws hook install       # zsh: a [Y/n] prompt to switch into the VM when a shell enters the mount
+rws agent-rules --all  # on the Mac: Claude Code, Codex, pi, Cline, Devin, Delta ask Mac or VM once (24 h)
 ```
 
 ## Machine-readable output

@@ -275,8 +275,8 @@ final class AppModel: ObservableObject {
     }
 
     /// Keep the zsh auto-shell integration and any previously installed
-    /// Delta rules current for the active configuration and bundled CLI.
-    /// Failure never blocks the app. Delta rules are only refreshed, never
+    /// agent rules current for the active configuration and bundled CLI.
+    /// Failure never blocks the app. Agent rules are only refreshed, never
     /// installed here — first installation stays an explicit user action.
     private func refreshIntegrations() async {
         guard configurationReady else { return }
@@ -303,9 +303,10 @@ final class AppModel: ObservableObject {
             await runIntegration(.hookRefresh(config: configurationURL),
                                  failure: "Intégration terminal non installée")
         }
+        // The key keeps its original name so existing opt-outs stay in effect.
         if preferences.object(forKey: "refreshDeltaRules") as? Bool ?? true {
-            await runIntegration(.deltaRulesRefresh(config: configurationURL),
-                                 failure: "Règles Delta non rafraîchies")
+            await runIntegration(.agentRulesRefresh(config: configurationURL),
+                                 failure: "Règles des agents non rafraîchies")
         }
     }
 
