@@ -209,15 +209,62 @@ fn a_rejected_key_fails_with_the_exact_fix_and_stops_before_vm_probes() {
 }
 
 #[test]
-fn tailscale_turned_off_fails_even_without_a_host() {
+fn tailscale_turned_off_only_warns_without_a_host() {
     let fake = Fake::new();
     fake.put("ts.json", r#"{"BackendState": "Stopped", "Peer": {}}"#);
     let (code, stdout, _) = fake.rws(&["onboard", "check", "--json"]);
-    assert_eq!(code, 1);
+    assert_eq!(code, 0, "{stdout}");
     let ts = find(&parse(&stdout), "mac.tailscale").cloned().unwrap();
     assert_eq!(
         (ts["status"].as_str(), ts["code"].as_str()),
-        (Some("fail"), Some("tailscale_stopped"))
+        (Some("warn"), Some("tailscale_stopped"))
+    );
+    assert!(ts["fix"].as_str().unwrap().contains("plain SSH"));
+}
+
+#[test]
+fn an_ssh_reachable_vm_is_not_blocked_by_tailscale_being_off() {
+    let fake = Fake::new();
+    fake.put("ts.json", r#"{"BackendState": "Stopped", "Peer": {}}"#);
+    fake.put("resolved", "files.example.org");
+    let (code, stdout, _) = fake.rws(&[
+        "onboard",
+        "check",
+        "--host",
+        "dev@files.example.org",
+        "--remote",
+        "/srv/p",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{stdout}");
+    let report = parse(&stdout);
+    assert_eq!(report["ok"], true);
+    assert_eq!(find(&report, "mac.tailscale").unwrap()["status"], "warn");
+    for id in ["vm.reachable", "vm.sftp", "vm.directory"] {
+        assert_eq!(find(&report, id).unwrap()["status"], "ok", "{id}: {stdout}");
+    }
+}
+
+#[test]
+fn an_unreachable_vm_still_fails_with_tailscale_as_one_possible_cause() {
+    let fake = Fake::new();
+    fake.put("ts.json", r#"{"BackendState": "Stopped", "Peer": {}}"#);
+    fake.put(
+        "ssh_fail",
+        "ssh: connect to host 10.0.0.9 port 22: Operation timed out\n",
+    );
+    let (code, stdout, _) = fake.rws(&["onboard", "check", "--host", "dev@10.0.0.9", "--json"]);
+    assert_eq!(code, 1);
+    let reach = find(&parse(&stdout), "vm.reachable").cloned().unwrap();
+    assert_eq!(
+        (reach["status"].as_str(), reach["code"].as_str()),
+        (Some("fail"), Some("unreachable"))
+    );
+    assert!(
+        reach["fix"]
+            .as_str()
+            .unwrap()
+            .contains("If the VM is on your tailnet")
     );
 }
 

@@ -80,6 +80,13 @@ final class OnboardingTests: XCTestCase {
         XCTAssertNil(OnboardText.fix(item("mac.ssh", "ok", "ok", fix: nil), host: "h", remote: "/r"))
     }
 
+    func testTailscaleHintsSayPlainSSHIsEnough() {
+        for code in ["tailscale_cli_missing", "tailscale_stopped", "tailscale_login", "tailscale_state", "tailscale_error"] {
+            let fix = OnboardText.fix(item("mac.tailscale", "warn", code), host: "h", remote: "/r") ?? ""
+            XCTAssertTrue(fix.contains("SSH classique"), "\(code): \(fix)")
+        }
+    }
+
     func testNoFixTextEverReachesAnOKCheckEvenWhenTheCLISentOne() {
         XCTAssertNil(OnboardText.fix(item("vm.sftp", "ok", "ok", fix: "stray"), host: "h", remote: "/r"))
     }

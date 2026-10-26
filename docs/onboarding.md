@@ -2,8 +2,8 @@
 
 [Documentation](README.md) · [Install](install.md) · [NFS bridge](nfs-bridge.md) · [Troubleshooting](troubleshooting.md)
 
-This guide takes a working Mac and a VM you can already reach over Tailscale to
-"my VM folder is open in Finder and in a terminal". RWS **checks** your setup
+This guide takes a working Mac and a VM you can already reach over key-based
+SSH to "my VM folder is open in Finder and in a terminal". RWS **checks** your setup
 first and tells you exactly what to fix; it never installs or configures
 Tailscale, SSH keys, host trust or sudo for you.
 
@@ -11,8 +11,8 @@ Tailscale, SSH keys, host trust or sudo for you.
 
 | On the Mac | On the VM |
 | --- | --- |
-| RWS installed (the app, or `rws` from a build) | Reachable over Tailscale (the machine shows online in `tailscale status`) |
-| Tailscale installed, connected and signed in | SSH login with a key works: `ssh USER@MACHINE true` returns without a password |
+| RWS installed (the app, or `rws` from a build) | Key-based SSH to the VM works: `ssh USER@HOST true` returns without a password |
+| Tailscale (recommended, not required) installed and connected, to reach the VM from anywhere | Tailscale (recommended) connected, if you use it to reach the VM |
 | `ssh` available (Apple's command line tools) | OpenSSH's SFTP server enabled (the default on most Linux distributions) |
 | | The folder you want to mount exists and you can write to it |
 
@@ -21,8 +21,8 @@ the files itself through the [NFS bridge](nfs-bridge.md).
 
 ## In the app
 
-Open **Ajouter une VM**. Pick a machine from **Machines Tailscale** (or type
-`utilisateur@machine`), enter the remote folder and a name, then press
+Open **Ajouter une VM**. Type `utilisateur@machine` (any host you reach over
+SSH), or pick a machine from **Machines Tailscale** if you use Tailscale, enter the remote folder and a name, then press
 **Vérifier**. Each finding is listed with the exact fix. When everything is
 green, press **Ajouter et monter**: the folder appears at `~/RWS/NAME` and opens
 in Finder. **Ajouter et monter** runs the same checks again, so it is safe to
@@ -57,7 +57,7 @@ rws onboard add demo --host dev@my-vm --remote /home/dev/project
 | Check | Passes when | A failure means |
 | --- | --- | --- |
 | `mac.ssh` | the `ssh` command exists | install Apple's tools: `xcode-select --install` |
-| `mac.tailscale` | Tailscale is connected | switched off, or signed out (warning if its command-line tool is missing) |
+| `mac.tailscale` | Tailscale is connected | warning only: Tailscale is missing, switched off or signed out, so your machines cannot be listed. Ignore it if your VM is reachable over plain SSH |
 | `vm.reachable` | `ssh -o BatchMode=yes USER@HOST true` succeeds | see the next table |
 | `vm.tailscale_peer` | the host is one of your Tailscale machines | warning only: the VM is outside your tailnet |
 | `vm.sftp` | the VM answers the SFTP protocol | the SFTP subsystem is missing or disabled |
@@ -72,7 +72,7 @@ rws onboard add demo --host dev@my-vm --remote /home/dev/project
 | `host_key_unknown` | this Mac never trusted the VM | `ssh USER@HOST` once and confirm the fingerprint |
 | `host_key_changed` | the VM was rebuilt, or something impersonates it | **Do not continue blindly.** If you rebuilt it: `ssh-keygen -R NAME`, then connect again. Otherwise investigate |
 | `tailscale_policy` | Tailscale SSH does not allow this user on that machine | use a user your ACL permits, or change the SSH rules in the Tailscale admin console |
-| `unresolved`, `unreachable` | no route to the VM | connect Tailscale on both ends; take the name from the machine list |
+| `unresolved`, `unreachable` | no route to the VM | check the host name, and that `ssh USER@HOST true` works; if the VM is on your tailnet, connect Tailscale on both ends and take the name from the machine list |
 | `refused` | nothing listens on the SSH port | start the SSH server on the VM (`sudo systemctl enable --now sshd`) |
 | `sftp_unavailable` | no SFTP subsystem | add `Subsystem sftp internal-sftp` to `/etc/ssh/sshd_config`, then reload sshd |
 | `directory_missing` | the folder does not exist | `mkdir -p '/path'` on the VM |

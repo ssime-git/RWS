@@ -106,17 +106,19 @@ enum OnboardText {
         case "ssh_missing":
             return "Installez les outils en ligne de commande Apple : `xcode-select --install`."
         case "tailscale_cli_missing":
-            return "Installez et ouvrez l’app Tailscale (tailscale.com/download/mac). Sans importance si votre VM est joignable autrement."
+            return "Pour lister les machines de votre réseau Tailscale, installez et ouvrez l’app Tailscale (tailscale.com/download/mac). Sans importance si votre VM est joignable en SSH classique."
         case "tailscale_stopped":
-            return "Ouvrez Tailscale dans la barre de menus et choisissez Connecter, puis réessayez."
+            return "Si votre VM est sur votre réseau Tailscale, ouvrez Tailscale dans la barre de menus et choisissez Connecter, puis réessayez. Sans importance si votre VM est joignable en SSH classique."
+        case "tailscale_state", "tailscale_error":
+            return "Si votre VM est sur votre réseau Tailscale, ouvrez l’app Tailscale et vérifiez qu’elle est connectée, puis réessayez. Sans importance si votre VM est joignable en SSH classique."
         case "tailscale_login":
-            return "Connectez-vous à Tailscale depuis la barre de menus (validez ce Mac si on vous le demande), puis réessayez."
+            return "Si votre VM est sur votre réseau Tailscale, connectez-vous à Tailscale depuis la barre de menus (validez ce Mac si on vous le demande), puis réessayez. Sans importance si votre VM est joignable en SSH classique."
         case "unresolved":
-            return "Vérifiez l’orthographe. Pour une machine Tailscale, choisissez-la dans la liste et vérifiez que Tailscale est connecté."
+            return "Vérifiez l’orthographe et que `ssh \(host) true` fonctionne depuis ce Mac. Si la VM est sur votre réseau Tailscale, choisissez-la dans la liste et vérifiez que Tailscale est connecté."
         case "refused":
             return "Démarrez le serveur SSH sur la VM (par exemple `sudo systemctl enable --now sshd`) ou vérifiez le port dans votre configuration SSH."
         case "unreachable":
-            return "Connectez Tailscale sur ce Mac et sur la VM (elle doit apparaître en ligne dans `tailscale status`), puis réessayez."
+            return "Vérifiez que la VM est démarrée et que son adresse et son port sont corrects. Si la VM est sur votre réseau Tailscale, connectez Tailscale sur ce Mac et sur la VM (elle doit apparaître en ligne dans `tailscale status`), puis réessayez."
         case "key_denied":
             return "Installez votre clé publique sur la VM, une seule fois : `ssh-copy-id \(host)` (le mot de passe de la VM est demandé une fois). Pas encore de clé ? Créez-en une d’abord : `ssh-keygen -t ed25519`."
         case "tailscale_policy":
@@ -138,7 +140,7 @@ enum OnboardText {
         case "directory_invalid":
             return "Donnez un chemin absolu, par exemple /home/vous/projet."
         case "outside_tailscale":
-            return "Sans importance si la VM est joignable autrement ; pour un lien privé, ajoutez-la à votre réseau Tailscale."
+            return "Sans importance si la VM est joignable en SSH classique ; Tailscale est seulement recommandé, pour joindre la VM de partout."
         default:
             return item.fix
         }
