@@ -137,9 +137,21 @@ filesystem I/O remains an underlying FSKit limitation, even with subprocess dead
 
 ### Install the rules for your agents
 
+Run this **once, on the Mac**, in any directory. The agents read their
+instruction files on the Mac, so this is where the rules go. Never run it on
+the VM. Use the durable CLI that `rws install` (or opening the app) placed in
+Application Support. It picks up the canonical configuration by itself:
+
 ```sh
-/absolute/path/rws --config /absolute/path/config.json agent-rules --all
+"$HOME/Library/Application Support/RWS/bin/rws" agent-rules --all
 ```
+
+With a different configuration, pass both absolute paths:
+`/absolute/path/rws --config /absolute/path/config.json agent-rules --all`.
+The durable CLI only has `agent-rules` after a build that includes it is
+installed: reopen the updated app, or run `rws install` from the new build.
+Run it again after you install a new agent. You do not need to run it again
+when you add a workspace, because one block covers every registered mount.
 
 `--all` writes a managed block into the personal instruction file of every known
 agent whose configuration directory exists, and prints a `Skipped` line for each
