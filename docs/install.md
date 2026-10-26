@@ -53,11 +53,11 @@ If the service is absent, rerun the two durable-install commands above. A failed
 mount does not establish that macFUSE can display a privilege prompt: approve its
 helper once in a GUI terminal, then let Launchd retry.
 
-Refresh zsh and Delta manually after installation using the managed executable:
+Enable the zsh hook and the agent rules manually after installation, using the managed executable:
 
 ```sh
 "$HOME/Library/Application Support/RWS/bin/rws" hook install
-"$HOME/Library/Application Support/RWS/bin/rws" delta-rules
+"$HOME/Library/Application Support/RWS/bin/rws" agent-rules --all
 ```
 
 These commands explicitly enable the integrations. Later `rws install` runs
@@ -189,8 +189,8 @@ is remembered for that shell. `exit` returns to the local shell. Terminals alrea
 `source ~/.zshrc`. The integration is one marked line in `~/.zshrc`; remove
 that line or set `RWS_NO_AUTO_SHELL=1` to opt out, and set the
 `installShellHook` app preference to `false` to stop automatic refresh.
-If [Delta rules](connection.md#delta-and-linux-commands) were installed, the
-app refreshes their embedded paths the same way (`refreshDeltaRules`
+If [agent rules](connection.md#agent-rules-and-linux-commands) were installed,
+the app refreshes their embedded paths the same way (`refreshDeltaRules`
 preference to opt out); it never installs them uninvited.
 
 ## 5. Run an agent on the VM or locally

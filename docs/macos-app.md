@@ -117,9 +117,9 @@ Do not declare those checks passed solely because a GitHub Release exists.
 The native app and build scripts can be tested without an Apple Developer account.
 Production signing/notarization and Sparkle delivery require the setup above.
 A development build deliberately cannot fetch production updates; replace it
-with the first signed release once available. The generic Delta routing rule is
-still an agent convention, not interception of native Delta processes; see
-[the Delta guide](connection.md#delta-and-linux-commands).
+with the first signed release once available. The generic agent routing rules are
+still an agent convention, not interception of native agent processes; see
+[the agent rules guide](connection.md#agent-rules-and-linux-commands).
 
 ## Configuration discovery at startup
 
@@ -132,7 +132,7 @@ if no known candidate exists. No configurations are merged or overwritten.
 
 The CLI validates the selected source and returns normalized JSON for the UI.
 Errors identify the selected path. Using the original file retains its mount
-receipts and avoids changing existing Delta rules. The chosen path is remembered
+receipts and avoids changing existing agent rules. The chosen path is remembered
 for future launches. Keep that file and the configured SSHFS executable in place.
 
 Startup checks the installed macFUSE package/runtime and runs the selected SSHFS

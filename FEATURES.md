@@ -87,8 +87,10 @@ Issue GitHub : [#1](https://github.com/ssime-git/RWS/issues/1).
 Issue GitHub : [#2](https://github.com/ssime-git/RWS/issues/2).
 
 - **Existant :** [règles personnelles Delta](src/agent_rules.rs),
-  [procédure actuelle](docs/connection.md#delta-and-linux-commands) et un diagnostic
+  [procédure actuelle](docs/connection.md#agent-rules-and-linux-commands) et un diagnostic
   réel réussi ; fonctionnement confirmé par l'utilisateur sur son parcours.
+  `rws agent-rules` installe aussi les règles de Claude Code, Codex, pi, Cline et Devin CLI,
+  et `rws choice` mémorise 24 h le choix Mac/VM par espace. Non validé de bout en bout.
 - **Manque :** exécution distante imposée par l'intégration, indépendamment de ces règles.
   Les terminaux intégrés, préparation de projet, outils Git, tests et sous-processus
   natifs doivent être évalués, pas seulement une commande volontairement enveloppée.

@@ -160,8 +160,9 @@ struct CLICommand: Equatable {
         Self(arguments: prefix(config) + ["install", "--skip-integrations"])
     }
 
-    static func deltaRulesRefresh(config: URL) -> Self {
-        Self(arguments: prefix(config) + ["delta-rules", "--if-installed"])
+    /// Refreshes only the agent rule files that already carry the RWS block.
+    static func agentRulesRefresh(config: URL) -> Self {
+        Self(arguments: prefix(config) + ["agent-rules", "--all", "--if-installed"])
     }
 }
 

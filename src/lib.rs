@@ -5,6 +5,7 @@ pub mod workspace;
 
 pub mod agent_rules;
 pub mod autostart;
+pub mod exec_choice;
 pub mod lifecycle;
 pub mod mount;
 pub mod nfs_bridge;

@@ -148,7 +148,7 @@ If macFUSE entries are absent, an upstream workaround adds them and restarts `fs
 
 Keep the agreed temporary grant active through the entire approved diagnosis/repair/verification sequence; do not revoke it between a read and the immediately following approved repair. If macOS requires a terminal restart for the grant to take effect, arrange it with the user before retrying. Run repair helpers as the logged-in user; scope sudo to a service restart rather than running the whole helper as root. Remove any grant added for troubleshooting after its final required step. macOS may retain Full Disk Access in a running terminal until it quits: an OFF switch alone does not prove effective revocation. Preserve the user's output and active work, then arrange and verify the required quit/reopen. If deferred, report the remaining grant lifetime explicitly. Never claim full setup success before real mount/edit/unmount checks pass.
 
-## 6. Terminal and Delta integration
+## 6. Terminal and agent integration
 
 After an active RWS configuration and a verified mount exist, offer the user's
 interactive zsh integration. With authorization to edit the user's zsh startup
@@ -177,16 +177,27 @@ shell local. `exit` returns to the local zsh. `RWS_AUTO_MODE=remote` and
 processes, non-zsh shells and IDE-internal subprocesses must remain untouched.
 Do not claim this is a transparent process redirector.
 
-If the user wants Delta integration, install the global managed rules separately
-with the same absolute binary and config, normally:
+Install the personal agent rules as an explicit setup step, with the same
+absolute binary and config:
 
 ```sh
-/absolute/path/to/rws --config /absolute/path/to/setup.json delta-rules \
-  --output "$HOME/.config/delta/AGENT.md"
+/absolute/path/to/rws --config /absolute/path/to/setup.json agent-rules --all
+/absolute/path/to/rws --config /absolute/path/to/setup.json agent-rules --list
 ```
 
-This guides Delta agents to use `rws context` and `rws exec`; it does not
-redirect Delta preparation, native Git operations, or arbitrary local
+`--all` writes a block only for agents whose configuration directory exists
+(Claude Code, Codex, pi, Cline, Devin CLI, Delta); `--list` shows each rules path
+and whether the block is present. Record which agents and files were written.
+The rules tell agents to ask Mac or VM once per workspace and to remember the
+answer for 24 hours, stored outside the mount. To reset that choice before a
+test, run `choice clear` and start a fresh agent turn; it should ask again:
+
+```sh
+/absolute/path/to/rws --config /absolute/path/to/setup.json choice clear --cwd /absolute/checkout
+```
+
+These rules guide agents to use `rws context`, `rws choice` and `rws exec`; they
+do not redirect agent preparation, native Git operations, or arbitrary local
 processes. Delta's interactive integrated terminal does load login zsh, so it
 uses the zsh hook when its working directory is a verified mount. Mount the
 workspace before adding its existing checkout to Delta. Validate an accepted
@@ -197,8 +208,8 @@ simulating it in a non-TTY shell.
 ## Completion record
 
 Report: mount backend (NFS bridge or legacy SSHFS); versions; build/test result; SSH/shell result; mount/edit/unmount result;
-zsh-hook installation and real-terminal result; Delta-rules installation and
-Delta-terminal result; screenshot locations; retained test data;
+zsh-hook installation and real-terminal result; agent-rules installation (agents and
+files written) and Delta-terminal result; the Mac/VM choice prompt in a fresh agent turn; screenshot locations; retained test data;
 temporary-permission final state; unresolved OS blockers. Continue useful
 independent steps, but label every unverified capability. Update the setup notes
 when new evidence changes the procedure.

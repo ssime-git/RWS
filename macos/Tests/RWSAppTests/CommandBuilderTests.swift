@@ -38,11 +38,11 @@ final class CommandBuilderTests: XCTestCase {
         )
     }
 
-    func testDeltaRulesRefreshOnlyTouchesExistingRules() {
+    func testAgentRulesRefreshOnlyTouchesExistingRules() {
         let config = URL(fileURLWithPath: "/tmp/config.json")
         XCTAssertEqual(
-            CLICommand.deltaRulesRefresh(config: config).arguments,
-            ["--config", "/tmp/config.json", "delta-rules", "--if-installed"]
+            CLICommand.agentRulesRefresh(config: config).arguments,
+            ["--config", "/tmp/config.json", "agent-rules", "--all", "--if-installed"]
         )
     }
 

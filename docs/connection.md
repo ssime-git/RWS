@@ -133,40 +133,86 @@ Inspect that path; do not recursively delete unrelated `.rws-verify-*` directori
 Crash locks must be inspected before removing a stale lock. OS-level uninterruptible
 filesystem I/O remains an underlying FSKit limitation, even with subprocess deadlines.
 
-## Delta and Linux commands
+## Agent rules and Linux commands
 
-### Install one rule for every registered project
+### Install the rules for your agents
 
 ```sh
-/absolute/path/rws --config /absolute/path/config.json delta-rules
+/absolute/path/rws --config /absolute/path/config.json agent-rules --all
 ```
 
-This installs a managed block in Delta's personal rules, choosing the existing
-nonempty `AGENT.md`/`AGENTS.md` in its documented user directories (or
-`DELTA_CONFIG_DIR`). Existing instructions are preserved and backed up privately
-beside the RWS configuration (`agent-rule-backups/`) before changing them.
-Repeating installation is idempotent: only the managed block between the
-`BEGIN/END RWS REMOTE EXECUTION` markers is replaced, never your own rules.
-Use `--output /absolute/path/AGENT.md` for an explicit location.
+`--all` writes a managed block into the personal instruction file of every known
+agent whose configuration directory exists, and prints a `Skipped` line for each
+other agent. Limit it with `--agent NAME` (repeatable), for example
+`--agent claude --agent codex`. `--list` prints each agent's rules path and
+whether the block is present, as JSON. `--target /absolute/path/FILE` selects
+an explicit file, with exactly one `--agent`. `rws delta-rules` remains an alias
+of `agent-rules --agent delta`.
 
+| Agent | Name for `--agent` | Rules file | Looked up in |
+| --- | --- | --- | --- |
+| Claude Code | `claude` | `CLAUDE.md` | `CLAUDE_CONFIG_DIR`, else `~/.claude` |
+| Codex | `codex` | `AGENTS.override.md` when nonempty, else `AGENTS.md` | `CODEX_HOME`, else `~/.codex` |
+| pi | `pi` | first existing of `AGENTS.override.md`, `AGENTS.md`, `CLAUDE.md` | `PI_CODING_AGENT_DIR`, else `~/.pi/agent` |
+| Cline | `cline` | `~/Documents/Cline/Rules/rws-remote-execution.md` | `CLINE_DIR`, else `~/.cline`, and `~/Documents/Cline` |
+| Devin CLI | `devin` | `AGENTS.md` or `AGENT.md` | `~/.config/devin` |
+| Delta | `delta` | `AGENT.md` or `AGENTS.md` | `DELTA_CONFIG_DIR`, else Delta's user directories |
+
+Existing instructions are preserved and backed up privately beside the RWS
+configuration (`agent-rule-backups/`) before changing them, with a backup name
+per agent. Repeating installation is idempotent: only the managed block between
+the `BEGIN/END RWS REMOTE EXECUTION` markers is replaced, never your own rules.
 The block embeds the absolute paths of the `rws` binary and configuration that
-installed it. Once installed, the app keeps it current: at startup and after a
-workspace is added, it runs `delta-rules --if-installed`, which rewrites an
-existing block with the bundled CLI's paths and does nothing when no block
-exists — the first installation stays an explicit action (the app button or
-the command above). Set the app preference `refreshDeltaRules` to `false` to
-stop the automatic refresh; removing the block re-enables nothing by itself.
+installed it.
 
-The installed rule applies across projects. It checks the actual filesystem
-checkout with `rws context --cwd /absolute/checkout`. A verified registered mount
-returns JSON with `mode: remote`, its host and its remote directory. A local
-project returns `mode: local`. Missing configuration, unavailable/unverified
-mounts, unknown `RWS-*` volumes, or paths escaping a mount return an error, not
-permission to execute locally. Register future mounts in the same configuration;
-there is no project-specific instruction to copy.
+After installation the rules are refreshed, never created. The app runs
+`agent-rules --all --if-installed` at startup and after a workspace is added: it
+rewrites each existing block with the bundled CLI's paths and skips any file
+without a block. `rws install` and `rws repair` refresh existing blocks the same
+way. Set the app preference `refreshDeltaRules` to `false` to stop the automatic
+refresh; the key keeps its name from when only Delta was managed. Removing a
+block re-enables nothing by itself.
 
-For remote projects the agent is instructed to forward the complete shell
-script, including pipes, redirects and expansion, through:
+### Choose Mac or VM for a mounted folder
+
+The installed rules check the actual filesystem checkout with
+`rws context --cwd /absolute/checkout`. A verified registered mount returns JSON
+with `mode: remote`, its host, its remote directory, and the saved choice
+(`choice`: `local`, `remote` or `null`, and `choice_expires_at` in Unix seconds).
+A local project returns `mode: local` without choice fields. Missing configuration,
+unavailable or unverified mounts, unknown `RWS-*` volumes, or paths escaping a
+mount return an error, not permission to execute locally. Register future mounts
+in the same configuration; there is no project-specific instruction to copy.
+
+When a mounted folder has no current choice, the agent stops before its first
+shell command and asks whether commands should run on this Mac or on the VM
+named by `host`. The answer is kept for the whole workspace for 24 hours. The
+agent records it with these commands, and you can run them yourself:
+
+```sh
+/absolute/path/rws --config /absolute/path/config.json choice set --cwd /absolute/checkout --mode local
+/absolute/path/rws --config /absolute/path/config.json choice get --cwd /absolute/checkout
+/absolute/path/rws --config /absolute/path/config.json choice clear --cwd /absolute/checkout
+```
+
+`choice get` prints the unexpired choice as JSON, or `null`. `choice clear`
+makes the agent ask again. The store is `exec-choices.json` next to the
+configuration file, never inside a mount. Paths outside a registered mount are
+refused. Once the choice expires, the agent asks again.
+
+- `remote`: every agent shell workload goes through the wrapper below.
+- `local`: commands run on this Mac in the mounted folder without the wrapper.
+  File access then crosses the mount and build output, caches and virtual
+  environments land on the VM. Keep a macOS environment separate from a Linux one
+  such as `.venv-rws`.
+- `null`: the agent asks the question above.
+
+The zsh terminal prompt and the `RWS_AUTO_MODE` variable do not read this stored
+choice, and the app's launcher buttons do not set it. Those remain separate
+mechanisms.
+
+With choice `remote`, the agent forwards the complete shell script, including
+pipes, redirects and expansion, through:
 
 ```sh
 rws --config /absolute/path/config.json exec --cwd /absolute/checkout --git-context -- sh -c 'python3 -m pytest'
@@ -183,12 +229,18 @@ do not use `cd` or `git -C` to switch repositories inside the same command-scope
 Git environment. Existing macOS virtual environments must be preserved; Linux
 dependencies can use a separate environment such as `.venv-rws`.
 
-These are instructions for agent-issued commands, not a hook into Delta's
+These are instructions for agent-issued commands, not a hook into any agent's
 process launcher. Project/folder rules or user messages can override personal
 rules. Delta's automatic preparation, direnv loading and native Git operations
-are not redirected by this rule. Verify the rule's first use in Delta with
+are not redirected by this rule, and the same holds for the other agents. Verify the rule's first use in Delta with
 remote `uname -s`, `hostname`, and `pwd`; installing a file alone does not
 prove that a Delta turn has followed it.
+
+> **Not yet validated end to end (2026-10-26).** The `agent-rules`, `choice` and
+> `context` commands and the rules text have CLI and unit test coverage. No live
+> session has yet confirmed that any agent asks the question, stores the answer,
+> or routes its command tool through `rws exec`. The Delta measurements below
+> predate the choice and the current rules text.
 
 Delta's **interactive integrated terminals** are a separate path: they start
 the user's login zsh, so the installed
