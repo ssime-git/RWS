@@ -113,6 +113,23 @@ struct CLICommand: Equatable {
 
     private static func prefix(_ config: URL) -> [String] { ["--config", config.path] }
 
+    /// Read-only; needs no configuration, so it works on a brand-new install.
+    /// `--remote` is only valid together with `--host`.
+    static func onboardCheck(host: String?, remote: String?) -> Self {
+        var arguments = ["onboard", "check"]
+        if let host {
+            arguments += ["--host", host]
+            if let remote { arguments += ["--remote", remote] }
+        }
+        return Self(arguments: arguments + ["--json"])
+    }
+
+    /// The CLI chooses the NFS backend and the mount point (~/RWS/NAME); the
+    /// app never forces a /Volumes path.
+    static func onboardAdd(config: URL, name: String, host: String, remotePath: String) -> Self {
+        Self(arguments: prefix(config) + ["onboard", "add", name, "--host", host, "--remote", remotePath, "--json"])
+    }
+
     static func add(config: URL, name: String, host: String, remotePath: String, mountPath: String) -> Self {
         Self(arguments: prefix(config) + ["workspace", "add", name, "--ssh", host, "--remote", remotePath, "--mount", mountPath])
     }

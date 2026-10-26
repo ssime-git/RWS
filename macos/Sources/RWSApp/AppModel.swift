@@ -20,6 +20,12 @@ final class AppModel: ObservableObject {
     @Published var checkingStartup = false
     @Published private(set) var prerequisitesReady = false
     @Published private(set) var detectedSSHFS: String?
+
+    // Guided VM onboarding (rws onboard): checks shown in the "Ajouter une VM" box.
+    @Published var vmChecks: [OnboardCheckItem] = []
+    @Published var vmMachines: [OnboardMachine] = []
+    @Published var vmCheckRunning = false
+    @Published var vmReady: Bool?
     private var started = false
     private let preferences = UserDefaults.standard
 
@@ -176,6 +182,84 @@ final class AppModel: ObservableObject {
         prerequisitesReady = prerequisiteProblem == nil
         if !prerequisitesReady, !diagnostic.isEmpty { output = diagnostic }
     }
+
+    /// Mac-side checks and the Tailscale machine list, without touching any VM.
+    func loadMachines() async {
+        guard !vmCheckRunning else { return }
+        do {
+            let result = try await ProcessRunner(timeout: .seconds(20)).run(
+                executable: cliURL, arguments: CLICommand.onboardCheck(host: nil, remote: nil).arguments)
+            let report = try OnboardReport.decode(Data(result.stdout.utf8))
+            vmMachines = report.machines
+            if vmReady == nil { vmChecks = report.checks.filter { $0.status != "ok" } }
+        } catch {
+            // The picker simply stays empty; typing a host still works.
+        }
+    }
+
+    /// Read-only: explains each problem and the exact fix before anything is added.
+    func checkVM(host: String, remote: String) async {
+        guard !vmCheckRunning, !host.isEmpty else { return }
+        vmCheckRunning = true
+        vmReady = nil
+        defer { vmCheckRunning = false }
+        do {
+            let result = try await ProcessRunner(timeout: .seconds(150)).run(
+                executable: cliURL,
+                arguments: CLICommand.onboardCheck(host: host, remote: remote.isEmpty ? nil : remote).arguments)
+            let report = try OnboardReport.decode(Data(result.stdout.utf8))
+            vmChecks = report.checks
+            vmMachines = report.machines
+            vmReady = report.ok
+        } catch {
+            vmChecks = []
+            vmReady = false
+            alertMessage = "La vérification n’a pas abouti : \(error.localizedDescription)"
+        }
+    }
+
+    /// Check, register on the NFS backend, mount and prove it, then show it in Finder.
+    func addVM(name: String, host: String, remotePath: String) async {
+        guard configurationReady, !isBusy, !updatesPreparing, !operationStateUncertain else { return }
+        isBusy = true
+        safeToTerminate = false
+        await updateGuard.beginOperation()
+        var succeeded = false
+        do {
+            let result = try await ProcessRunner(timeout: .seconds(300)).run(
+                executable: cliURL,
+                arguments: CLICommand.onboardAdd(config: configurationURL, name: trimmed(name), host: host, remotePath: remotePath).arguments)
+            if let report = try? OnboardAddReport.decode(Data(result.stdout.utf8)) {
+                vmChecks = report.checks
+                vmReady = !report.checks.contains { $0.isFailure }
+                succeeded = report.ok
+                if !report.ok, let failed = report.results.first(where: { $0.status == "failed" }) {
+                    alertMessage = "Étape en échec : \(failed.summary)\n\(failed.output)"
+                }
+            } else {
+                // Input rejected before any check (for example an invalid name).
+                let message = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                alertMessage = message.isEmpty ? "RWS exited with status \(result.exitCode)." : message
+            }
+        } catch {
+            alertMessage = error.localizedDescription
+            if case ProcessRunnerError.timedOut = error { operationStateUncertain = true }
+            await updateGuard.setMountState(.unknown)
+        }
+        await updateGuard.endOperation()
+        isBusy = false
+        if succeeded {
+            load()
+            selectedWorkspace = trimmed(name)
+            await checkPrerequisites()
+            await refreshIntegrations()
+            await openSelected()
+        } else {
+            await refreshStatus()
+        }
+    }
+
+    private func trimmed(_ value: String) -> String { value.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     func add(name: String, host: String, remotePath: String, mountPath: String) async {
         guard await perform(.add(config: configurationURL, name: name, host: host, remotePath: remotePath, mountPath: mountPath), refreshAfter: false) else { return }

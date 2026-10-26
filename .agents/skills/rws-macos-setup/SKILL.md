@@ -5,6 +5,8 @@ description: Use when an agent needs to install, configure, validate, or trouble
 
 # RWS setup on a new Mac
 
+To connect an already working Mac to a VM, use `rws-vm-onboarding` instead; this skill is for building and validating RWS itself on a new Mac.
+
 Bring a fresh Mac to a verified remote-workspace workflow. Record separate results for build, SSH execution, filesystem mount, Finder edits, and unmount. Passing unit tests or `rws doctor` does not prove mounting works.
 
 **Default mount backend: the built-in NFS bridge.** `rws connect` starts `rws nfs-bridge`, a localhost-only NFSv3 server that forwards to the remote host over the system `ssh -s HOST sftp`; macOS mounts it with its own NFS client. It needs no macFUSE, no SSHFS, no remote install and no sudo. Mount points must be user-owned (`~/RWS/NAME`), never under `/Volumes`. Read `docs/nfs-bridge.md`. macFUSE/SSHFS (sections 2b and 5) is a legacy backend: install it only when the user explicitly asks for it.
@@ -62,7 +64,7 @@ For the diagnosed macOS 27/macFUSE 5.4/SSHFS 3.7.5 combination, follow `docs/ssh
 
 ## 3. Isolated workspace
 
-Select a unique workspace name and an unused mount path (`~/RWS/NAME` for NFS). Use an empty, dedicated remote directory; with user authorization, `mktemp -d /tmp/rws-test.XXXXXX` on the remote host can provide one. Record its exact returned path. Do not use a remote home directory or valuable project for write/failure tests.
+Select a unique workspace name and an unused mount path (`~/RWS/NAME` for NFS). Use an empty, dedicated remote directory; with user authorization, `mktemp -d /tmp/rws-test.XXXXXX` on the remote host can provide one. Record its exact returned path. Some hosts clear `/tmp` at boot (Alpine's `bootmisc` does) and an OrbStack machine wakes on any SSH connection, so `orbctl stop` is not a network outage and a restarted machine loses that directory; for outage or reboot tests choose a directory under the remote home and a real network cut. Do not use a remote home directory or valuable project for write/failure tests.
 
 Use the following example only after replacing the example host and path with the selected values. With the NFS backend, the mount point is a user-owned directory such as `~/RWS/setup-test`; with the legacy FSKit backend it is an unused `/Volumes/RWS-...` path.
 

@@ -9,6 +9,7 @@ implementation; the feature backlog describes the desired product, not shipped b
 
 | Guide | What you will find |
 | --- | --- |
+| [Connect a Mac to a VM](onboarding.md) | Guided checks, exact fixes, NFS mount, validation; the `rws onboard` reference |
 | [Install and open the app](install.md) | Existing bundle, development download, prerequisites, first workspace |
 | [Troubleshooting](troubleshooting.md) | Symptom → check → next action |
 | [Finder behavior](finder-macos.md) | Favorites, remounts, manual pinning and file checks |
@@ -34,6 +35,7 @@ implementation; the feature backlog describes the desired product, not shipped b
 - [Validation journal](validation.md): dated evidence, failed attempts and later corrections.
 - [Decisions](decisions.md): historical scope and the correction restoring the original goal.
 - [FSKit diagnosis](fskit-debugging.md): historical investigation, not an installation recipe.
+- [Native NFS feasibility (archived)](experiments/2026-09-24-native-mount-feasibility.md): SMB/kernel-NFS findings from the closed PR #26, superseded by the [NFS bridge](nfs-bridge.md).
 - [Initial CLI plan](implementation-plan.md) and [historical implementation plans](superpowers/plans/):
   development records, not current user instructions.
 

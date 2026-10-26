@@ -111,7 +111,9 @@ step or subprocess created by the agent application.
 | [`src/main.rs`](../src/main.rs) | CLI commands, SSH invocation, lifecycle orchestration |
 | [`src/mount.rs`](../src/mount.rs), [`lifecycle.rs`](../src/lifecycle.rs) | Mount process handling, identity and recorded state |
 | [`src/agent_rules.rs`](../src/agent_rules.rs) | Current instruction-based Delta integration |
+| [`src/onboarding.rs`](../src/onboarding.rs) | Read-only Mac/VM checks with stable codes and fixes; the plan and execution of `rws onboard add` over existing subcommands |
 | [`AppModel.swift`](../macos/Sources/RWSApp/AppModel.swift) | UI state, config discovery, command coordination |
+| [`Onboarding.swift`](../macos/Sources/RWSApp/Onboarding.swift) | JSON models of `rws onboard --json` and the French wording of each finding code |
 | [`ProcessRunner.swift`](../macos/Sources/RWSApp/ProcessRunner.swift) | Bounded output/deadlines for app-launched CLI operations |
 | [`AgentLauncher.swift`](../macos/Sources/RWSApp/AgentLauncher.swift) | Quoted private launcher for an explicit remote agent |
 | [`FinderSidebar.swift`](../macos/Sources/RWSApp/FinderSidebar.swift) | Scoped bookmark replacement/removal |

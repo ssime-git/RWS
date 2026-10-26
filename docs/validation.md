@@ -673,6 +673,128 @@ terminal tab, `RWS_AUTO_MODE=remote; cd ~/RWS/razer-1/DocuCoachAI` printed
 the remote prompt. The interactive `[Y/n]` prompt in that tab was not
 exercised.
 
+## NFS bridge on a disposable second host — 2026-10-22
+
+Toolchain: Rust 1.99.1 stable reinstalled with the official rustup (SHA-256
+verified) after the old temporary toolchain vanished. Checkout at `main`
+(`fb9b726`): 156 Rust tests, `clippy -D warnings`, `cargo fmt --check`, the
+Swift suite and the development app bundle build all pass locally.
+
+Setup: OrbStack Alpine machine `rws-second@orb`, backend `nfs`, workspace
+`orb-test` mounted at `~/RWS/orb-test` over an empty `mktemp` remote
+directory. No macFUSE, no sudo, nothing installed on the host beyond OpenSSH's
+SFTP server.
+
+- **File semantics** (each verified independently over SSH): create/read,
+  Unicode and emoji names, symlinks, executable bit, editor-style atomic save
+  (Mac side), remote atomic replace visible on the Mac within 3 s, no `._*`
+  file written remotely after `xattr -w`, exit-code propagation, and
+  `scripts/test-mount-listing.py` PASS.
+- **Resilience:** killing only the bridge's `ssh` child and reading a
+  never-read file succeeded in 0 s with the child respawned; killing the bridge
+  made reads fail with `Operation timed out` after 6 s (no frozen Finder),
+  `status` reported `unresponsive mount`, `umount -f` worked without sudo in
+  1 s and left no `mount_nfs`/`umount` process; reconnecting kept all data;
+  `disconnect` made the bridge exit by itself and paused auto-reconnect while
+  preserving remote files. The zsh hook triggered inside the new `~/RWS/NAME`
+  mount root (prompt, remote shell, return to local).
+- **Durable installation** (`install --skip-integrations`, `autostart install`,
+  `launchctl bootstrap`, disposable configuration only; `.zshrc` checksum
+  unchanged): an external `diskutil unmount` with intent `connected` was
+  remounted by the LaunchAgent after about 20 s; a killed bridge was recovered
+  automatically after 57 s with a new bridge and intact data; `rws doctor`
+  reported every check `[ok]` (managed executable, 30-second schedule observed
+  in launchd, verified and responsive mount, SSH reachable).
+- **Harness lessons:** Alpine's `bootmisc` empties `/tmp` at boot and OrbStack
+  wakes a stopped machine on any SSH connection. `orbctl stop` is therefore not
+  an outage (the bridge's reconnect restarted the machine, `/tmp` vanished and
+  the bridge faithfully reported the missing remote root with `ENOENT`); when
+  the directory was recreated the live bridge recovered in under a second
+  without a remount. Outage tests need a persistent remote root and a real
+  network cut.
+
+Not covered by this entry: a real network loss or delayed Tailscale start,
+reboot/login remount, the app's GUI flow with the NFS backend, Ctrl+C and
+terminal resize in a human session, and the cutover of the real
+`razer-documents` workspace. macFUSE's runtime was already absent from this Mac
+(only two package receipts and a repository-local SSHFS build remain), so the
+legacy FSKit backend cannot mount until a backend change.
+
+## Cutover of razer-documents to the NFS bridge — 2026-10-22
+
+The real workspace moved from FSKit/SSHFS (macFUSE already absent from this
+Mac) to the NFS bridge. A new production configuration holds only
+`razer-documents` (backend `nfs`, mount `~/RWS/razer-documents`, previously
+`/Volumes/RWS-Documents`); the former configuration was backed up and left as
+an archive. `install` copied the release binary of the app bundle into durable
+state, `autostart install` and `launchctl bootstrap` activated the LaunchAgent,
+and its first pass mounted the volume by itself. `.zshrc` was not touched.
+`rws doctor` reported every check `[ok]`.
+
+- **Real data:** SHA-256 of an existing remote file matched on both sides;
+  in a uniquely named scratch directory (removed afterwards, confirmed absent
+  on the host) create/read, Unicode and emoji names, symlink, executable bit,
+  Mac-to-host write, host-to-Mac atomic replace visible within 3 s, editor-style
+  atomic save and no remote `._*` file all passed.
+- **Terminal hook:** entering a subfolder with spaces under the new mount root
+  prompted, opened the remote shell in the exact mapped directory and returned
+  to the local shell on exit.
+- **Real network cut (Tailscale turned off for about 60 s):** the bridge kept
+  the same process; reads, `stat`, directory listing and writes failed with
+  `Input/output error` (a failed write is visible, never silently lost);
+  listing `~/RWS` stayed instantaneous so Finder is not frozen; the first
+  request after the cut waits for the bridge's bounded timeout (about 10–15 s)
+  and later requests fail at once; three seconds after Tailscale came back the
+  mount served data again without any remount. Six never-read files showed no
+  empty or truncated reads (the two `rc=142` results were the test harness's own
+  10-second alarm), and contents were intact afterwards.
+
+Not covered: reboot and login remount, a delayed Tailscale start at login, the
+app's GUI flow and Finder sidebar entry with the new path, Ctrl+C and terminal
+resize in a human session, and Delta projects, which must be re-added at the
+new path. The repository-local SSHFS build was deleted with macFUSE; the
+legacy FSKit path can no longer mount on this Mac.
+
+## Guided VM onboarding — 2026-10-22
+
+`rws onboard check` and `rws onboard add`, the app's **Ajouter une VM**
+assistant and the `rws-vm-onboarding` agent skill were built test-first and
+exercised on this Mac, the real razer VM and the OrbStack machine.
+
+- **Real checks:** the razer VM passed every check (key login, SFTP version 3
+  with `posix-rename`, folder writable, tailnet membership). Real failures were
+  classified as expected: a user refused by the tailnet's Tailscale SSH policy,
+  an unresolvable name, a missing folder (with the `mkdir -p` fix), and an
+  unknown host key (OpenSSH's own message, reproduced with an empty known-hosts
+  file).
+- **A bug a lenient fake had hidden:** the first real run failed `vm.sftp`
+  (`bash: - : invalid option`) because `-s sftp` had been placed after `--` and so
+  reached the remote shell. The test double now follows OpenSSH's rule that
+  options only count before `--`, the test failed first, then the order was fixed.
+- **End to end:** `onboard add` took an empty configuration to a mounted,
+  verified NFS workspace in one command against a remote folder with accents and
+  spaces; a write through the mount reached the VM; re-running was idempotent
+  (only `connect` ran). With `--install` inside an isolated `HOME` the durable
+  installation, the login-agent plist and a connect through the durable binary all
+  completed; the `launchctl bootstrap` step warned harmlessly because the real
+  agent already owned that label, and the real installation, its configuration and
+  its mount were unchanged afterwards.
+- **App:** command builders, JSON decoding and the French wording per finding code
+  are unit tested; the rebuilt app launches without a crash report. The assistant's
+  layout and click-through were **not** exercised by a human or an automation
+  tool.
+- **Agent skill:** a baseline without the skill needed `rws onboard` deduced from
+  the source (the documentation did not mention it), noticed that the README still
+  required macFUSE, and wrote an option that does not exist (`rws status
+  --workspace`). With the skill, three agents (nominal path, a changed host key
+  under pressure to delete it and disable checking, a request for a `/Volumes`
+  mount plus macFUSE and every integration) followed the exact syntax, declined
+  every unsafe request and asked the right confirmations. The documentation was
+  corrected in the same change.
+
+Not covered: onboarding a host that is not on Tailscale, a VM with a non-OpenSSH
+SFTP server, non-Linux VMs, and the app assistant used by a person.
+
 ## Agent rules and Mac/VM choice — 2026-10-26
 
 Implemented: `rws agent-rules` for Claude Code, Codex, pi, Cline, Devin CLI and
@@ -690,3 +812,4 @@ toolchain, so `swift test` was not run. The three edited Swift files pass `swift
 Not validated end to end: no live agent session has been run to confirm that an
 agent asks the Mac/VM question, follows the stored choice, or routes its command tool
 through `rws exec`. The Delta measurements of 2026-09-20 used the earlier rules text.
+||||||| 9f4094c

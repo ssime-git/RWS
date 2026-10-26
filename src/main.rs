@@ -26,6 +26,11 @@ enum Action {
         #[arg(long)]
         skip_integrations: bool,
     },
+    /// Guided VM onboarding: check this Mac and a VM, explain every failure.
+    Onboard {
+        #[command(subcommand)]
+        action: OnboardAction,
+    },
     /// Describe whether a filesystem directory belongs to a verified RWS mount.
     Context {
         #[arg(long)]
@@ -132,7 +137,7 @@ enum Action {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Mount a registered workspace (requires SSHFS/macFUSE on macOS).
+    /// Mount a registered workspace (NFS bridge by default; macFUSE/SSHFS for the legacy backend).
     #[command(name = "connect", visible_alias = "mount")]
     Mount {
         workspace: String,
@@ -204,6 +209,46 @@ enum Backend {
     Fskit,
     /// Built-in localhost NFS bridge over SFTP: no macFUSE or SSHFS needed.
     Nfs,
+}
+#[derive(Subcommand)]
+enum OnboardAction {
+    /// Read-only checks of this Mac and, with --host, of a VM. Exit 1 if any
+    /// check fails; warnings do not fail it.
+    Check {
+        /// SSH destination of the VM, as USER@HOST or an SSH alias.
+        #[arg(long)]
+        host: Option<String>,
+        /// Absolute folder on the VM that will be mounted.
+        #[arg(long, requires = "host")]
+        remote: Option<String>,
+        /// Machine-readable report for the app and for agents.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check the VM, then register, mount and prove a workspace on the NFS
+    /// backend. Nothing is changed when a check fails; re-running is safe.
+    Add {
+        /// Workspace name (letters, digits, _ and -).
+        name: String,
+        /// SSH destination of the VM, as USER@HOST or an SSH alias.
+        #[arg(long)]
+        host: String,
+        /// Absolute folder on the VM to mount.
+        #[arg(long)]
+        remote: String,
+        /// Where it appears on this Mac (default: ~/RWS/NAME).
+        #[arg(long)]
+        mount: Option<PathBuf>,
+        /// Also install RWS durably and start the login agent.
+        #[arg(long)]
+        install: bool,
+        /// Show the plan without changing anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Machine-readable report for the app and for agents.
+        #[arg(long)]
+        json: bool,
+    },
 }
 #[derive(Subcommand)]
 enum HookAction {
@@ -295,6 +340,72 @@ fn default_config() -> Result<PathBuf, String> {
         ".config/rws"
     };
     Ok(PathBuf::from(home).join(base).join("config.json"))
+}
+#[allow(clippy::too_many_arguments)]
+fn onboard_add(
+    config_path: &std::path::Path,
+    name: &str,
+    host: &str,
+    remote: &str,
+    mount: Option<&std::path::Path>,
+    install: bool,
+    dry_run: bool,
+    json: bool,
+) -> Result<i32, String> {
+    let home = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is unset")?);
+    let mount = mount
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| home.join("RWS").join(name));
+    Workspace {
+        name: name.into(),
+        host: host.into(),
+        remote_root: remote.into(),
+        mount_root: mount.clone(),
+    }
+    .validate()?;
+    let checked = rws::onboarding::run_check(Some(host), Some(remote));
+    let mut report = rws::onboarding::AddReport {
+        ok: checked.ok,
+        dry_run,
+        checks: checked.checks,
+        steps: Vec::new(),
+        results: Vec::new(),
+        mount: mount.display().to_string(),
+    };
+    if report.ok {
+        let layout = canonical_layout()?;
+        let context = rws::onboarding::PlanContext {
+            exe: std::env::current_exe().map_err(|e| e.to_string())?,
+            config: config_path.to_path_buf(),
+            canonical_config: layout.config_path(),
+            canonical_binary: layout.binary(),
+            launch_agent: home.join("Library/LaunchAgents/io.rws.mounts.plist"),
+            uid: unsafe { libc::getuid() },
+        };
+        let request = rws::onboarding::AddRequest {
+            name: name.into(),
+            host: host.into(),
+            remote: remote.into(),
+            mount,
+            install,
+        };
+        let config = Config::load(config_path)?;
+        report.steps = rws::onboarding::plan_add(&context, &config, &request)?;
+        if !dry_run {
+            let (results, ok) = rws::onboarding::execute(&report.steps);
+            report.results = results;
+            report.ok = ok;
+        }
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+        );
+    } else {
+        print!("{}", rws::onboarding::format_add(&report));
+    }
+    Ok(if report.ok { 0 } else { 1 })
 }
 fn canonical_layout() -> Result<rws::installation::Layout, String> {
     let home = std::env::var_os("HOME").ok_or("HOME is unset")?;
@@ -690,6 +801,25 @@ fn run_with_origin(cli: Cli, origin: OperationOrigin) -> Result<i32, String> {
         rws::nfs_bridge::serve(host, remote_root, mount, export)?;
         return Ok(0);
     }
+    // Checks run before any configuration exists, so no config is loaded.
+    if let Action::Onboard {
+        action: OnboardAction::Check { host, remote, json },
+    } = &cli.command
+    {
+        let report = rws::onboarding::run_check(host.as_deref(), remote.as_deref());
+        if *json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+            );
+        } else {
+            print!(
+                "{}",
+                rws::onboarding::format_report(&report, host.is_some())
+            );
+        }
+        return Ok(if report.ok { 0 } else { 1 });
+    }
     let explicit_config = cli.config.is_some();
     let path = match cli.config {
         Some(p) => p,
@@ -702,6 +832,30 @@ fn run_with_origin(cli: Cli, origin: OperationOrigin) -> Result<i32, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => path,
         Err(error) => return Err(format!("resolve configuration: {error}")),
     };
+    if let Action::Onboard {
+        action:
+            OnboardAction::Add {
+                name,
+                host,
+                remote,
+                mount,
+                install,
+                dry_run,
+                json,
+            },
+    } = &cli.command
+    {
+        return onboard_add(
+            &path,
+            name,
+            host,
+            remote,
+            mount.as_deref(),
+            *install,
+            *dry_run,
+            *json,
+        );
+    }
     if let Action::Workspace {
         action:
             WorkspaceAction::Add {
@@ -929,6 +1083,7 @@ fn execute_action(
             Ok(0)
         }
         Action::Autostart { .. } => unreachable!(),
+        Action::Onboard { .. } => unreachable!(),
         Action::Context { cwd } => {
             let cwd = match cwd {
                 Some(p) => p,
