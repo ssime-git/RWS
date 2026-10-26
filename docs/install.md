@@ -3,8 +3,9 @@
 [Documentation](README.md) · [Build it yourself](development.md) · [Troubleshooting](troubleshooting.md)
 
 This guide is for using the macOS app. You do not need Rust to run a built bundle.
-The current preview is **not a zero-setup installer**: you need Tailscale, a VM
-reachable over key-based SSH, and an app bundle (see below). macFUSE is **not**
+The current preview is **not a zero-setup installer**: you need key-based SSH to
+a VM (`ssh USER@HOST true` works without a password) and an app bundle (see
+below). Tailscale is recommended for reaching the VM from anywhere. macFUSE is **not**
 required: RWS mounts files through its own [NFS bridge](nfs-bridge.md). To connect
 a Mac to a VM step by step, read [Connect a Mac to a VM](onboarding.md).
 
@@ -133,8 +134,8 @@ folder, template README or ZIP. The original config remains in place and is reme
 | Requirement | Where / how |
 | --- | --- |
 | Apple silicon Mac | Current app packaging is arm64. Other packages are not supplied. |
-| Tailscale | Installed, connected and signed in on the Mac and on the VM. The guided onboarding assumes it; any route that reaches the VM over SSH also works for the CLI. |
-| Key-based SSH to the VM | `ssh USER@MACHINE true` must succeed without a password prompt. Mounting runs non-interactively. RWS does not create SSH keys, edit `~/.ssh/config` or type passwords. |
+| Key-based SSH to the VM | `ssh USER@HOST true` must succeed without a password prompt. Mounting runs non-interactively. RWS does not create SSH keys, edit `~/.ssh/config` or type passwords. |
+| Tailscale (recommended) | Not required. Connected on the Mac and on the VM, it lets you reach the VM from anywhere, and the app lists your tailnet machines. Any route that reaches the VM over SSH works. |
 | SFTP server on the VM | OpenSSH's `sftp-server` (the Linux default); its `posix-rename` support lets editors save atomically. |
 | Existing remote folder | An absolute path you can write to; the first verification writes a disposable proof file. |
 

@@ -97,7 +97,7 @@ pub fn ssh_failure_check(failure: &SshFailure, host: &str, stderr: &str) -> Chec
         SshFailure::Unresolved => (
             "unresolved",
             format!("Cannot resolve the host name `{name}`."),
-            "Check the spelling. For a Tailscale machine use its MagicDNS name (see the machine list from `rws onboard check`) and make sure Tailscale is connected.".to_string(),
+            format!("Check the spelling, and that `ssh {host} true` works from this Mac. If the VM is on your tailnet, use its MagicDNS name (see the machine list from `rws onboard check`) and connect Tailscale."),
         ),
         SshFailure::Refused => (
             "refused",
@@ -107,7 +107,7 @@ pub fn ssh_failure_check(failure: &SshFailure, host: &str, stderr: &str) -> Chec
         SshFailure::Unreachable => (
             "unreachable",
             "The VM did not answer (timeout or no route).".to_string(),
-            "Connect Tailscale on this Mac and on the VM (it must show as online in `tailscale status`), then retry.".to_string(),
+            "Check that the VM is running and that its address and port are right. If the VM is on your tailnet, connect Tailscale on this Mac and on the VM (it must show as online in `tailscale status`), then retry.".to_string(),
         ),
         SshFailure::KeyDenied => (
             "key_denied",
@@ -274,24 +274,24 @@ pub fn tailscale_check(state: &TailscaleState) -> Check {
         ),
         "Stopped" => check(
             "mac.tailscale",
-            Status::Fail,
+            Status::Warn,
             "tailscale_stopped",
-            "Tailscale is installed but switched off.",
-            Some("Turn Tailscale on: open its menu bar app and choose Connect, then retry.".into()),
+            "Tailscale is installed but switched off, so your machines cannot be listed.",
+            Some("If your VM is on your tailnet, turn Tailscale on: open its menu bar app and choose Connect, then retry. Ignore this if your VM is reachable over plain SSH.".into()),
         ),
         "NeedsLogin" | "NeedsMachineAuth" => check(
             "mac.tailscale",
-            Status::Fail,
+            Status::Warn,
             "tailscale_login",
             "Tailscale needs you to sign in.",
-            Some("Log in to Tailscale from its menu bar app (approve this Mac if asked), then retry.".into()),
+            Some("If your VM is on your tailnet, log in to Tailscale from its menu bar app (approve this Mac if asked), then retry. Ignore this if your VM is reachable over plain SSH.".into()),
         ),
         other => check(
             "mac.tailscale",
-            Status::Fail,
+            Status::Warn,
             "tailscale_state",
             format!("Tailscale is in state `{other}`."),
-            Some("Open the Tailscale app and make sure it shows as connected, then retry.".into()),
+            Some("If your VM is on your tailnet, open the Tailscale app and make sure it shows as connected, then retry. Ignore this if your VM is reachable over plain SSH.".into()),
         ),
     }
 }
@@ -448,14 +448,14 @@ fn mac_tailscale_check(state: &Result<Option<TailscaleState>, String>) -> Check 
             Status::Warn,
             "tailscale_cli_missing",
             "The Tailscale command-line tool was not found, so your machines cannot be listed.",
-            Some("Install and open the Tailscale app (https://tailscale.com/download/mac). Ignore this if your VM is reachable another way.".into()),
+            Some("To list your tailnet machines, install and open the Tailscale app (https://tailscale.com/download/mac). Ignore this if your VM is reachable over plain SSH.".into()),
         ),
         Err(message) => check(
             "mac.tailscale",
-            Status::Fail,
+            Status::Warn,
             "tailscale_error",
             format!("Tailscale did not answer: {message}"),
-            Some("Open the Tailscale app and make sure it is running, then retry.".into()),
+            Some("If your VM is on your tailnet, open the Tailscale app and make sure it is running, then retry. Ignore this if your VM is reachable over plain SSH.".into()),
         ),
     }
 }
@@ -646,7 +646,7 @@ fn vm_tailscale_peer(host: &str, peers: &[Peer]) -> Check {
             Status::Warn,
             "outside_tailscale",
             format!("{host} is not one of your Tailscale machines."),
-            Some("Fine if the VM is reachable another way; for a private link, add it to your tailnet.".into()),
+            Some("Fine if the VM is reachable over plain SSH; Tailscale is only recommended, to reach the VM from anywhere.".into()),
         )
     }
 }
@@ -1053,6 +1053,14 @@ mod tests {
         assert!(fix(&key).contains("ssh-copy-id dev@vm"), "{}", fix(&key));
         let unknown = ssh_failure_check(&HostKeyUnknown, "dev@vm", "");
         assert!(fix(&unknown).contains("ssh dev@vm"));
+        for failure in [Unresolved, Unreachable] {
+            let check = ssh_failure_check(&failure, "dev@vm", "");
+            assert!(
+                fix(&check).contains("If the VM is on your tailnet"),
+                "Tailscale is only one possible cause: {}",
+                fix(&check)
+            );
+        }
         let changed = ssh_failure_check(&HostKeyChanged, "dev@vm", "");
         assert!(fix(&changed).contains("ssh-keygen -R vm"));
         assert!(
@@ -1139,16 +1147,30 @@ mod tests {
             (running.id.as_str(), running.status),
             ("mac.tailscale", Status::Ok)
         );
+        // Tailscale is recommended, not required: no state blocks onboarding.
         state.backend_state = "Stopped".into();
         let stopped = tailscale_check(&state);
-        assert_eq!(stopped.status, Status::Fail);
-        assert!(
-            fix(&stopped).to_lowercase().contains("turn on") || fix(&stopped).contains("Connect")
-        );
+        assert_eq!(stopped.status, Status::Warn);
+        assert!(fix(&stopped).contains("Connect"));
         state.backend_state = "NeedsLogin".into();
         let login = tailscale_check(&state);
-        assert_eq!(login.status, Status::Fail);
+        assert_eq!(login.status, Status::Warn);
         assert!(fix(&login).to_lowercase().contains("log in"));
+        state.backend_state = "Starting".into();
+        let other = tailscale_check(&state);
+        assert_eq!(
+            (other.code.as_str(), other.status),
+            ("tailscale_state", Status::Warn)
+        );
+        for item in [&stopped, &login, &other] {
+            assert!(fix(item).contains("plain SSH"), "{}", fix(item));
+        }
+        let error = mac_tailscale_check(&Err("boom".into()));
+        assert_eq!(
+            (error.code.as_str(), error.status),
+            ("tailscale_error", Status::Warn)
+        );
+        assert!(fix(&error).contains("plain SSH"));
     }
 
     #[test]

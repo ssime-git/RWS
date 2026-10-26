@@ -5,8 +5,8 @@ Choices marked **(call)** are the builder's, not the user's.
 
 ## Intent
 
-Someone with a working Mac and a Linux VM already reachable through Tailscale
-should go from "RWS is installed" to "my VM folder is open in Finder and in a
+Someone with a working Mac and a Linux VM already reachable over key-based SSH
+(Tailscale recommended, not required) should go from "RWS is installed" to "my VM folder is open in Finder and in a
 terminal" with the least possible typing and no guesswork. The baseline is
 checked first; when it is not met, RWS says exactly what to do and stops —
 it does not install anything for the person.
@@ -19,7 +19,8 @@ it does not install anything for the person.
   workspace on the NFS bridge, mounts it and proves it works (`rws onboard add`).
 - The same engine drives the macOS app (an "Ajouter une VM" assistant) and the
   agent skill, through `--json`. **(call)**
-- Tailscale machines are offered as a list, so nobody types a hostname.
+- Tailscale machines are offered as a list when Tailscale is connected; any
+  `user@host` reachable over SSH can be typed instead.
 
 ## Non-goals and anti-goals
 
@@ -39,7 +40,7 @@ fails; warnings do not fail it.
 | Id | Meaning | Fail/warn handling |
 | --- | --- | --- |
 | `mac.ssh` | `ssh` executable present | fail: install Xcode command line tools |
-| `mac.tailscale` | Tailscale CLI found, running, logged in | fail with the exact missing step; warn when the CLI is absent but the host answers |
+| `mac.tailscale` | Tailscale CLI found, running, logged in | warn only, with the exact missing step: Tailscale is recommended, not required, and SSH reachability decides |
 | `vm.reachable` | `ssh -o BatchMode=yes HOST true` succeeds | classified from SSH's own message: unresolved name, refused, timeout/no route (Tailscale hint), public-key denied (key setup steps), unknown host key (connect once and confirm the fingerprint), changed host key (stop and investigate, never auto-fixed) |
 | `vm.sftp` | the host's SFTP subsystem answers the protocol handshake | fail: SFTP server missing or disabled |
 | `vm.atomic_save` | the SFTP server advertises `posix-rename@openssh.com` | warn: editors' atomic saves may fail |

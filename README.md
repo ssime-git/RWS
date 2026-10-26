@@ -19,7 +19,7 @@ where the files live and where explicitly launched commands execute.
 
 | You want to… | Start here |
 | --- | --- |
-| Connect a Mac to a VM you reach over Tailscale | [Connect a Mac to a VM](docs/onboarding.md) |
+| Connect a Mac to a VM you reach over SSH | [Connect a Mac to a VM](docs/onboarding.md) |
 | Open an existing `RWS.app` by double-clicking | [App user guide](docs/install.md#1-get-the-app) |
 | Download a development build without compiling RWS | [Build availability](docs/install.md#build-availability) |
 | Compile, test and run the app yourself | [Developer quick start](docs/development.md) |
@@ -52,7 +52,8 @@ and its evidence replace the former "transparent execution" goal
 
 ## A first session
 
-Start from a working Mac and a VM reachable over Tailscale with key-based SSH
+Start from a working Mac and key-based SSH to the VM (`ssh USER@HOST true` works
+without a password); Tailscale is recommended for reaching the VM from anywhere
 ([what is expected](docs/onboarding.md#before-you-start)):
 
 1. Double-click **RWS.app**.
